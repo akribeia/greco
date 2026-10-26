@@ -104,6 +104,32 @@ Stopping the server leaves submitted Slurm jobs running.
 > permissions. Project-file privacy depends on the permissions of the project
 > folders; sharing the installation does not change those permissions.
 
+## Slurm template
+
+Open **Slurm template** in the web interface, paste this example and save it:
+
+```bash
+#!/usr/bin/env bash
+#SBATCH --partition=gpu
+#SBATCH --job-name=greco
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=04:00:00
+```
+
+Replace `gpu` with your cluster's GPU partition. Adjust memory and time for
+your jobs. If your cluster requires an account, add
+`#SBATCH --account=your_account`. Add a GPU type or constraint only if your
+cluster requires it.
+
+Greco fills in the job name, log paths, nodes, tasks and CPU count, and adds
+the GPU request from the job settings when no GPU directive is present.
+It also supplies the environment and processing command. You can paste an
+existing cluster batch script instead; only its `#SBATCH` options are kept.
+The saved template is shared across your projects, within your Unix account.
+
 ## Update
 
 Check whether a new release is available:
