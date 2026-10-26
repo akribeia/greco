@@ -1,0 +1,15 @@
+include install.py README.md LICENSE COPYRIGHT pyproject.toml
+prune docs
+prune MATLAB
+recursive-include licenses *
+recursive-include runtime-locks *.txt *.json
+recursive-include greco/web/static *
+recursive-include greco/native *.c
+recursive-include greco/_numerics/native *
+recursive-include greco/sta/vendor/liblbfgs *
+recursive-include greco/picker *.cu
+recursive-include greco/picker/_data *.npz
+prune runtime
+prune tests
+prune assets
+global-exclude __pycache__ *.pyc *.so *.build.json

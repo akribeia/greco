@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Greco · Cryo-ET workspace</title>
+  <meta name="description" content="Web-based cryo-electron tomography from detector movies to tomograms and subtomogram averages, with GPU processing and Slurm job management.">
+  <link rel="icon" type="image/png" href="/emblem.png?v=361aad00">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/segmentation.css">
+  <script src="/core.js?v=production-refactor-1" defer></script>
+  <script src="/projects.js?v=production-refactor-1" defer></script>
+  <script src="/navigation.js?v=production-refactor-1" defer></script>
+  <script src="/preprocessing.js?v=production-refactor-1" defer></script>
+  <script src="/tilt-viewer.js?v=production-refactor-1" defer></script>
+  <script src="/ctf-controls.js?v=production-refactor-1" defer></script>
+  <script src="/reconstruction-steps.js?v=production-refactor-1" defer></script>
+  <script src="/manual-curation.js?v=production-refactor-1" defer></script>
+  <script src="/geometry.js?v=source-names-18" defer></script>
+  <script src="/reconstruction.js?v=production-refactor-1" defer></script>
+  <script src="/picking.js?v=production-refactor-1" defer></script>
+  <script src="/manual.js?v=production-refactor-1" defer></script>
+  <script src="/sta-cards.js?v=asymmetric-sta-1" defer></script>
+  <script src="/sta-viewer.js?v=class-support-4" defer></script>
+  <script src="/sta-jobs.js?v=asymmetric-sta-1" defer></script>
+  <script src="/sta-actions.js?v=source-names-18" defer></script>
+  <script src="/sta.js?v=source-names-18" defer></script>
+  <script src="/segmentation.js?v=membranes-denoise-21" defer></script>
+  <script src="/updates.js" defer></script>
+  <script src="/app.js?v=production-refactor-1" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><img class="brand-mark" src="/emblem.png?v=361aad00" alt="Greco emblem" width="39" height="39"><span>Greco<span class="brand-caption">CRYO-ET WORKSPACE</span></span><span class="version">α</span></div>
+    <div class="project-selector"><button class="project-switch" id="project-switch" aria-expanded="false" aria-controls="recent-project-menu"><span class="project-icon">▦</span><span><strong id="project-name">Select project</strong><small id="project-location">Server folder</small></span><span>⌄</span></button><div id="recent-project-menu" class="recent-project-menu" hidden aria-label="Recent projects"></div></div>
+    <div class="sidebar-heading"><span>TILT SERIES</span><span id="series-count">0</span></div>
+    <label class="search"><span>⌕</span><input id="series-search" placeholder="Search tilt series…" aria-label="Search tilt series"></label>
+    <div id="series-list" class="series-list"><div class="sidebar-empty">Imported tilt series will appear here.</div></div>
+    <div class="sidebar-footer"><span class="live-dot"></span>Server running<span class="sidebar-footer-right">Greco __GRECO_VERSION__</span></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><div class="breadcrumb"><span>Workspace</span><span>/</span><strong id="breadcrumb-project">No project</strong></div><div class="topbar-actions"><button id="settings-open" class="button secondary">⚙ Slurm template</button><button id="updates-open" data-running-version="__GRECO_VERSION__" class="button secondary" aria-haspopup="menu" aria-expanded="false">Version __GRECO_VERSION__</button></div></header>
+    <nav id="stages" class="stages" aria-label="Project stages"></nav>
+    <main id="workspace" tabindex="-1"></main>
+    <footer class="page-footer"><span>Original data stays in its source location.</span><span id="project-save-status">Choose a project to get started</span></footer>
+  </div>
+  <dialog id="project-dialog" class="modal project-modal">
+    <div class="modal-heading"><span class="eyebrow">YOUR WORKSPACE</span><h2>Open a project</h2><p>Choose a folder on the server to store your project settings and tilt-series list.</p></div>
+    <form id="project-form">
+      <label class="field-label" for="project-path">Project folder</label>
+      <div class="path-control"><input id="project-path" required placeholder="/scratch/my_project" autocomplete="off"><button type="button" data-browse="project-path" class="button secondary">Browse</button></div>
+      <label class="check-line"><input type="checkbox" id="project-create"> Create the folder if it does not exist</label>
+      <p class="form-error" id="project-error" role="alert"></p>
+      <div class="modal-actions"><button type="button" id="project-cancel" class="button secondary">Cancel</button><button class="button primary" type="submit">Open project <span>→</span></button></div>
+    </form>
+  </dialog>
+  <dialog id="browse-dialog" class="modal browse-modal">
+    <div class="modal-heading"><span class="eyebrow">SERVER FILES</span><h2 id="browse-title">Select a folder</h2></div>
+    <form id="browse-path-form" class="browse-location"><button type="button" id="browse-up" class="button secondary" aria-label="Parent folder">↑</button><input id="browse-location" aria-label="Server folder path" autocomplete="off" spellcheck="false" placeholder="/scratch/my_project"><button type="submit" class="button secondary">Go</button></form>
+    <div id="browse-list" class="browse-list"></div><p id="browse-error" class="form-error" role="alert"></p>
+    <div class="modal-actions"><button id="browse-cancel" class="button secondary">Cancel</button><button id="browse-select" class="button primary">Use this folder</button></div>
+  </dialog>
+  <dialog id="import-dialog" class="modal import-modal">
+    <div class="modal-heading import-heading"><div><span class="eyebrow">IMPORT DATA</span><h2 id="import-title">Connect your tilt series</h2></div><button id="import-close" class="icon-button" aria-label="Close import">×</button></div>
+    <div id="import-progress" class="import-progress"></div>
+    <div id="import-body"></div>
+    <p id="import-error" class="form-error" role="alert"></p>
+    <div class="modal-actions"><span id="import-summary" class="muted"></span><div class="action-group"><button id="import-back" class="button secondary">Back</button><button id="import-next" class="button primary">Find files →</button></div></div>
+  </dialog>
+  <dialog id="edit-dialog" class="modal"><div class="modal-heading"><span class="eyebrow">SHARED METADATA</span><h2 id="edit-title"></h2><p>These values and the gain apply to every tilt series in the project. Original mdocs are preserved.</p></div><form id="edit-form"><div id="edit-fields" class="metadata-grid"></div><p id="edit-error" class="form-error" role="alert"></p><div class="modal-actions"><button type="button" id="edit-cancel" class="button secondary">Cancel</button><button type="submit" class="button primary">Save for the entire project</button></div></form></dialog>
+  <div id="greco-versions" class="greco-version-menu" popover="auto" role="menu" aria-label="Installed Greco versions" tabindex="-1"></div>
+  <dialog id="settings-dialog" class="modal import-modal">
+    <div class="modal-heading"><span class="eyebrow">USER SETTINGS</span><h2>Cluster / Slurm</h2><p>Shared across your projects. Paste a batch script or edit the template. Saving never submits jobs.</p></div>
+    <form id="settings-form">
+      <div class="settings-content">
+      <label class="field-label" for="submission-host">Submission host · optional</label>
+      <div class="path-control"><input id="submission-host" placeholder="Local submission, or user@vcl1092" autocomplete="off"></div>
+      <label class="field-label slurm-label" for="slurm-template">Slurm script / template</label>
+      <textarea id="slurm-template" class="slurm-editor" required spellcheck="false" aria-describedby="slurm-help"></textarea>
+      <p id="slurm-help" class="hint">Paste any cluster batch script. Greco extracts only #SBATCH options: partition, account, GPU selection, memory and time are preserved. Job name, logs, nodes, tasks and CPUs become variables. The pasted software exports, directory and commands are discarded; Greco supplies {{environment}}, {{work_dir}} and {{command}}. Original pasted text is retained for reference.</p>
+      <div id="slurm-warning" class="warning-note" role="status"></div>
+      <p id="settings-error" class="form-error" role="alert"></p>
+      </div>
+      <div class="modal-actions"><button type="button" id="settings-cancel" class="button secondary">Close</button><button type="submit" class="button primary">Normalize &amp; save template</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" class="toast hidden"></div>
+  <dialog id="assembly-delete-dialog" class="modal"><div class="modal-heading"><h2>Delete particle assembly and files?</h2><p id="assembly-delete-name"></p><p>This permanently deletes this assembly's working files and reconstructed averages from disk, including previous runs. Original data, picks and tomograms will be preserved.</p></div><form id="assembly-delete-form"><label class="check-line"><input id="assembly-delete-confirm" type="checkbox" required> I confirm that I want to permanently delete this assembly and its files.</label><p id="assembly-delete-error" class="form-error" role="alert"></p><div class="modal-actions"><button id="assembly-delete-cancel" type="button" class="button secondary">Cancel</button><button id="assembly-delete-submit" type="submit" class="button danger" disabled>Delete assembly and files</button></div></form></dialog>
+</body>
+</html>

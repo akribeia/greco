@@ -1,0 +1,150 @@
+RELION numerical reference attribution
+=====================================
+
+Greco contains Python ports of identified RELION numerical routines and
+postprocessing. The minimal C++ core calls FFTW/glibc directly and retains
+reference FFT normalization and FSC/Guinier accumulation conventions.
+
+Original notices for those reference routines are retained below.
+The GPL text is in COPYING.txt.
+
+/***************************************************************************
+ *
+ * Author: "Jasenko Zivanov"
+ * MRC Laboratory of Molecular Biology
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * This complete copyright notice must be included in any revised version of the
+ * source code. Additional authorship citations may be added, but existing
+ * author citations must be preserved.
+ ***************************************************************************/
+
+/***************************************************************************
+ *
+ * Author: "Sjors H.W. Scheres"
+ * MRC Laboratory of Molecular Biology
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * This complete copyright notice must be included in any revised version of the
+ * source code. Additional authorship citations may be added, but existing
+ * author citations must be preserved.
+ ***************************************************************************/
+
+Additional retained upstream source notice
+-----------------------------------------
+
+/***************************************************************************
+ *
+ * Authors: Carlos Oscar S. Sorzano (coss@cnb.csic.es)
+ *
+ * Unidad de Bioinformatica of Centro Nacional de Biotecnologia , CSIC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ e You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+ * 02111-1307  USA
+ *
+ * All comments concerning this program package may be sent to the
+ * e-mail address 'xmipp@cnb.csic.es'
+ ***************************************************************************/
+
+Additional retained upstream source notice
+-----------------------------------------
+
+/*
+ * backprojector.cpp
+ *
+ *  Created on: 24 Aug 2010
+ *      Author: scheres
+ */
+
+Additional retained upstream source notice
+-----------------------------------------
+
+/***************************************************************************
+ *
+ * Authors:    Roberto Marabini	(roberto@cnb.csic.es)
+ *             Carlos Oscar S. Sorzano	(coss@cnb.csic.es)
+ *
+ * Unidad de Bioinformatica of Centro Nacional de Biotecnologia, CSIC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+ * 02111-1307 USA
+ *
+ * All comments concerning this program package may be sent to the
+ * e-mail address 'xmipp@cnb.csic.es'
+ ***************************************************************************/
+
+Additional retained upstream source notice
+-----------------------------------------
+
+/***************************************************************************
+ *
+ * Authors:    Roberto Marabini					(roberto@cnb.csic.es)
+ *			   Carlos Oscar S. Sorzano			(coss@cnb.csic.es)
+ *
+ * Unidad de  Bioinformatica of Centro Nacional de Biotecnologia , CSIC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+ * 02111-1307  USA
+ *
+ *	All comments concerning this program package may be sent to the
+ *	e-mail address 'xmipp@cnb.csic.es'
+ ***************************************************************************/
+
+Per-file notices were restored on 2026-10-23 in the identified Python ports,
+core/fftw.py, and native/numerics.cpp. Their comments identify the upstream
+source paths and distinguish Greco contributions. The upstream Tait-Bryan
+and tomography extraction headers contain no individual author notice.

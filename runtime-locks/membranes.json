@@ -1,0 +1,23 @@
+{
+  "format": "greco-membranes-v1",
+  "architecture": "greco-membranes-unet",
+  "checkpoint": "assets/membranes/membrain-seg-quantized.pt",
+  "sha256": "088fb77ef9e92b46c427dd3f76bdba4ca2c09849bc3528b9c2152d1497a80b72",
+  "bytes": 72839572,
+  "source_bytes": 72747883,
+  "source_sha256": "cbe6bee7386ba1b6839b4f73c36c0df762a427faa0863e8a7682fcb00b9f0bbc",
+  "complete_state_tensors": 188,
+  "auxiliary_tensors": 117,
+  "storage_compression_only": true,
+  "decoded_dtype": "float32",
+  "strict_load": true,
+  "external_checkpoint_required": false,
+  "validation": {
+    "exact_reference_decode": true,
+    "strict_cpu_model_load": true,
+    "missing_tensor_rejection": true,
+    "full_volume_gpu_test": false,
+    "retired_format_rejected": true
+  },
+  "name": "MemBrain-seg (quantized)"
+}

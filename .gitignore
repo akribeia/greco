@@ -1,0 +1,30 @@
+runtime/
+bin/
+releases/
+environments/
+tmp/
+.bootstrap-*/
+.installation.lock
+install.log
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.ruff_cache/
+.coverage
+htmlcov/
+greco/**/*.so
+greco/**/*.build.json
+
+# Include only the release membrane checkpoint.
+assets/*
+!assets/membranes/
+assets/membranes/*
+!assets/membranes/membrain-seg-quantized.pt
+
+# MATLAB editor backups and generated viewer state.
+*.asv
+*~
+MATLAB/*.dyn
