@@ -46,7 +46,8 @@ function pickAssemblyInfo(assembly){
   const records=Object.values(assembly.series || {}),count=records.reduce((n,r)=>n+Number(r.picking?.pick_count || 0),0);
   const states=records.map(r=>r.queued_picking?'queued':r.picking?.state);
   const active=['running','submitted','submitting','queued','failed'].find(s=>states.includes(s));
-  return `${assembly.picker_template?.name || 'No template'} · ${count} picks${active?' · '+jobStateLabel(active):''}`;
+  const reconstruction=(state.project.reconstruction_assemblies || []).find(r=>r.id===assembly.reconstruction_assembly_id);
+  return `${reconstruction?reconstruction.name+' · ':''}${assembly.picker_template?.name || 'No template'} · ${count} picks${active?' · '+jobStateLabel(active):''}`;
 }
 
 function updatePickAssemblySummaries(){
@@ -85,9 +86,9 @@ function bindPickAssemblies(){
   const button=document.createElement('button');button.className='button primary';button.textContent='＋ New pick assembly';button.type='button';heading.appendChild(button);
   button.onclick=()=>{
     const dialog=document.createElement('dialog');dialog.className='assembly-job-dialog';
-    dialog.innerHTML=`<form><h3>New pick assembly</h3><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Pick assembly ${String((project.pick_assemblies || []).length+1).padStart(3,'0')}"></label><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Create</button></div></form>`;
+    dialog.innerHTML=`<form><h3>New pick assembly</h3><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Pick assembly ${String((project.pick_assemblies || []).length+1).padStart(3,'0')}"></label><label class="metadata-field"><span>Reconstruction</span><select name="reconstruction" required>${(project.reconstruction_assemblies || []).map(r=>`<option value="${esc(r.id)}" ${r.id===project.active_reconstruction_assembly?'selected':''}>${esc(r.name)}</option>`).join('')}</select></label><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Create</button></div></form>`;
     document.body.appendChild(dialog);dialog.onclose=()=>dialog.remove();dialog.querySelector('[type=button]').onclick=()=>dialog.close();
-    dialog.querySelector('form').onsubmit=async event=>{event.preventDefault();const submit=event.submitter;submit.disabled=true;try{const result=await api('/api/pick-assemblies',{project_id:project.id,name:dialog.querySelector('input').value});dialog.close();if(state.project?.id===project.id)saveProject(result);}catch(e){dialog.querySelector('.form-error').textContent=e.message;submit.disabled=false;}};
+    dialog.querySelector('form').onsubmit=async event=>{event.preventDefault();const submit=event.submitter;submit.disabled=true;try{const result=await api('/api/pick-assemblies',{project_id:project.id,name:dialog.querySelector('input').value,reconstruction_id:dialog.querySelector('[name=reconstruction]').value});dialog.close();if(state.project?.id===project.id)saveProject(result);}catch(e){dialog.querySelector('.form-error').textContent=e.message;submit.disabled=false;}};
     dialog.showModal();
   };
   const layout=$('workspace').querySelector('.picking-layout'),list=document.createElement('div');list.className='pick-assemblies';
@@ -117,6 +118,11 @@ function pickerOptionsFromForm() {
 
 function renderPicking() {
   const project=state.project;
+  const assembly=(project.pick_assemblies || []).find(a=>a.id===project.active_pick_assembly);
+  if(assembly?.reconstruction_assembly_id && assembly.reconstruction_assembly_id!==project.active_reconstruction_assembly){
+    $('workspace').innerHTML='<div class="page-heading"><h1>Picking</h1></div><p>Loading reconstruction…</p>';
+    api('/api/select-pick-assembly',{project_id:project.id,assembly_id:assembly.id}).then(result=>{if(state.project?.id===project.id)saveProject(result);}).catch(error=>notify(error.message));return;
+  }
   const context=project.id+':'+(project.active_pick_assembly || '');
   if(state.pickerProject!==context){state.pickerDrafts ??= {};if(state.pickerProject)state.pickerDrafts[state.pickerProject]=state.pickerDraft;state.pickerProject=context;state.pickerDraft=state.pickerDrafts[context] || null;}
   if(!project.active_pick_assembly){

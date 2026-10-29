@@ -254,7 +254,7 @@ function segmentationWorkspaceHtml(record,opened,staSources){
   const key=record.id+':'+member.series_id;
   const step=completed.find(s=>s.number===state.segmentationView[key]) || completed[completed.length-1];
   const active=member.steps.some(s=>['submitted','running','unknown'].includes(s.state)) || state.segmentationSubmitting?.[state.project.id+':'+key];
-  return `<details class="pick-assembly segmentation-workspace" data-segmentation="${esc(record.id)}" ${opened.has(record.id)?'open':''}><summary><strong>${esc(record.name)}</strong><span class="hint">${record.tomograms.length} tomograms · bin${record.binning}</span><button type="button" class="button secondary assembly-delete-button" data-delete-segmentation="${esc(record.id)}" aria-label="Delete ${esc(record.name)}">Delete</button></summary><div class="assembly-body"><div class="picking-layout segmentation-content"><div class="picker-main segmentation-main">
+  return `<details class="pick-assembly segmentation-workspace" data-segmentation="${esc(record.id)}" ${opened.has(record.id)?'open':''}><summary><strong>${esc(record.name)}</strong><span class="hint">${esc((state.project.reconstruction_assemblies || []).find(r=>r.id===record.reconstruction_assembly_id)?.name || '')}${record.reconstruction_assembly_id?' · ':''}${record.tomograms.length} tomograms · bin${record.binning}</span><button type="button" class="button secondary assembly-delete-button" data-delete-segmentation="${esc(record.id)}" aria-label="Delete ${esc(record.name)}">Delete</button></summary><div class="assembly-body"><div class="picking-layout segmentation-content"><div class="picker-main segmentation-main">
     ${segmentationViewerHtml(member,record.binning,step)}
     </div><aside class="panel processing-parameters segmentation-sidebar" aria-label="Segmentation tools"><div class="panel-header">Segmentation</div>${segmentationToolsHtml(member,key,step,active,staSources)}</aside><p class="form-error" data-segmentation-error></p></div></div></details>`;
 }
@@ -482,14 +482,27 @@ async function pollSegmentation(){
 function newSegmentation(){
   const project=state.project;let dialog=$('segmentation-create-dialog');
   if(!dialog){dialog=document.createElement('dialog');dialog.id='segmentation-create-dialog';dialog.className='modal';document.body.appendChild(dialog);}
-  const rows=project.series.filter(r=>r.enabled!==false && (pickingSourceJob(r)?.state==='completed'));
-  dialog.innerHTML=`<form><h3>New segmentation</h3><div class="metadata-grid"><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Segmentation ${String((project.segmentations || []).length+1).padStart(3,'0')}"></label><label class="metadata-field"><span>Binning</span><select name="binning">${[1,2,4,8,16].map(b=>`<option ${b===8?'selected':''}>${b}</option>`).join('')}</select></label></div><p class="hint">Rebuild with final Wiener CTF correction and Greco WBP, retaining the selected geometry and tomogram thickness. Finer binning may require reading native movies.</p><label class="check-line"><input type="checkbox" data-select-all checked> All available tomograms</label><div class="segmentation-selection">${rows.map(r=>`<label class="check-line"><input type="checkbox" name="series" value="${esc(r.id)}" checked>${esc(r.name)}</label>`).join('') || '<p>No completed reconstructions available.</p>'}</div><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary" ${rows.length?'':'disabled'}>Create &amp; reconstruct</button></div></form>`;
+  const reconstructions=project.reconstruction_assemblies || [];
+  const rows=[];
+  dialog.innerHTML=`<form><h3>New segmentation</h3><div class="metadata-grid"><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Segmentation ${String((project.segmentations || []).length+1).padStart(3,'0')}"></label><label class="metadata-field"><span>Binning</span><select name="binning">${[1,2,4,8,16].map(b=>`<option ${b===8?'selected':''}>${b}</option>`).join('')}</select></label></div><p class="hint">Rebuild with final Wiener CTF correction and Greco WBP, retaining the selected geometry and tomogram thickness. Finer binning may require reading native movies.</p><label class="metadata-field"><span>Reconstruction</span><select name="reconstruction" required>${reconstructions.map(r=>`<option value="${esc(r.id)}" ${r.id===project.active_reconstruction_assembly?'selected':''}>${esc(r.name)}</option>`).join('')}</select></label><label class="check-line"><input type="checkbox" data-select-all checked> All available tomograms</label><div class="segmentation-selection">${rows.map(r=>`<label class="check-line"><input type="checkbox" name="series" value="${esc(r.id)}" checked>${esc(r.name)}</label>`).join('') || '<p>No completed reconstructions available.</p>'}</div><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary" ${rows.length?'':'disabled'}>Create &amp; reconstruct</button></div></form>`;
+  const updateTomograms=()=>{
+    const identifier=dialog.querySelector('[name=reconstruction]').value;
+    const record=reconstructions.find(r=>r.id===identifier);
+    const rows=project.series.filter(row=>{
+      const saved=identifier===project.active_reconstruction_assembly?row:record?.series?.[row.id];
+      return row.enabled!==false && saved && pickingSourceJob(saved)?.state==='completed';
+    });
+    dialog.querySelector('.segmentation-selection').innerHTML=rows.map(row=>`<label class="check-line"><input type="checkbox" name="series" value="${esc(row.id)}" checked>${esc(row.name)}</label>`).join('') || '<p>No completed reconstructions available.</p>';
+    dialog.querySelector('[data-select-all]').checked=true;
+    dialog.querySelector('[type=submit]').disabled=!rows.length;
+  };
+  dialog.querySelector('[name=reconstruction]').onchange=updateTomograms;updateTomograms();
   dialog.querySelector('button[type=button]').onclick=()=>dialog.close();
   dialog.querySelector('[data-select-all]').onchange=e=>dialog.querySelectorAll('[name=series]').forEach(c=>c.checked=e.target.checked);
   dialog.querySelector('form').onsubmit=async e=>{
     e.preventDefault();const button=dialog.querySelector('button[type=submit]');button.disabled=true;button.textContent='Creating…';dialog.querySelector('.form-error').textContent='';
     try{
-      const result=await api('/api/segmentation-create',{project_id:project.id,segmentation:{name:dialog.querySelector('[name=name]').value,binning:Number(dialog.querySelector('[name=binning]').value),series_ids:[...dialog.querySelectorAll('[name=series]:checked')].map(c=>c.value)}});
+      const result=await api('/api/segmentation-create',{project_id:project.id,segmentation:{name:dialog.querySelector('[name=name]').value,reconstruction_assembly_id:dialog.querySelector('[name=reconstruction]').value,binning:Number(dialog.querySelector('[name=binning]').value),series_ids:[...dialog.querySelectorAll('[name=series]:checked')].map(c=>c.value)}});
       if(state.project.id!==project.id)return;state.project=result;segmentationExpanded().add(result.segmentations.at(-1).id);saveSegmentationExpansion(project.id);dialog.close();renderSegmentation();
     }catch(error){const message=dialog.querySelector('.form-error');message.textContent=error.message;message.scrollIntoView({block:'nearest'});}finally{button.disabled=false;button.textContent='Create & reconstruct';}
   };dialog.showModal();

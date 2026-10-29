@@ -65,7 +65,28 @@ def run(config):
         if data.get('alignment_options') is not None:
             from .alignment_options import validate
             guidance=validate(**data['alignment_options'])
-        source,frozen,voxel=prepare_raw_source(data['inputs'],data['orientation'],output)
+        from ..optimizer.advanced_options import checked_resolved,resolve
+        advanced=checked_resolved(data['advanced_options']) if 'advanced_options' in data else resolve()
+        if advanced['advanced_mode'] and int(data['inputs']['binning'])!=8:raise ValueError('Advanced mode requires bin8 input.')
+        if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')) and guidance and guidance['smoothness_strength']!=0:raise ValueError('Smoothness must be zero for angular refinement.')
+        alignment_inputs=data['inputs']
+        if advanced['advanced_mode']:
+            from ..final_reconstruction import final_stack
+            # Rebuild the immutable alignment raster from movies with flat,
+            # axis-independent CTF and newly estimated even/odd reliability.
+            from ..project_layout import preprocessing_work
+            from ..optimizer.flat_stack import reusable
+            prep=preprocessing_work(Path(data['inputs']['stack']))
+            options=json.loads(storage_path(prep,'config.json').read_text()).get('options',{})
+            cached=reusable(prep,options,np.loadtxt(data['inputs']['rawtlt'],ndmin=1))
+            if cached is not None:
+                print('Advanced: reusing preprocessing flat CTF + reliability bin8 stack.',flush=True)
+                alignment_inputs=dict(data['inputs'],stack=str(cached))
+            else:
+                print('Advanced: no valid preprocessing flat stack; preparing from movies.',flush=True)
+                final_stack(data,None,output,return_raw=True,alignment_input=True)
+                alignment_inputs=dict(data['inputs'],stack=str(storage_path(output,'flat_ctf_reliability_rawsource.mrcs')))
+        source,frozen,voxel=prepare_raw_source(alignment_inputs,data['orientation'],output)
         from ..runtime import ROOT,worker_environment
         env=worker_environment()
         alignment=storage_path(output, 'alignment')
@@ -81,19 +102,32 @@ def run(config):
             env['GRECO_IMAGE_SMOOTHNESS']=str(guidance['smoothness_strength'])
             env['GRECO_RESCUE_ENABLED']='1' if guidance['rescue_tilts'] else '0'
         command.extend(['--global-margin-buffer','0'])
+        if advanced['advanced_mode']:
+            advanced_config=storage_path(output,'advanced_config.json')
+            advanced_config.write_text(json.dumps(dict(stack=str(source),angles=data['inputs']['rawtlt'],
+                frozen_shifts=str(frozen),output=str(alignment),options=advanced,
+                axis_deg=data['orientation']['rotation_deg'],thickness=thickness,entry_sigma=sigma,
+                rescue=guidance['rescue_tilts'] if guidance else True,
+                smoothness=guidance['smoothness_strength'] if guidance else 0.),indent=2))
+            command=[sys.executable,'-m','greco.optimizer.advanced','--config',str(advanced_config)]
         (storage_path(output, 'command.json')).write_text(json.dumps(command,indent=2))
         subprocess.run(command,env=env,cwd=ROOT,check=True)
         from ..reconstruction_layout import organize_engine_output
         organize_engine_output(output)
+        if advanced.get('fine_scale_refinement'):
+            from ..optimizer.fine_scale import run as refine_fine_scale
+            refine_fine_scale(data,output,source)
         summary=json.loads((storage_path(alignment, 'summary.json')).read_text())
         active=np.asarray(summary['active_indices'],int)
-        angles=np.loadtxt(data['inputs']['rawtlt'],ndmin=1)[active]
+        from ..alignment_geometry import resolve as resolve_geometry
+        with np.load(storage_path(alignment,'final_state.npz'),allow_pickle=False) as checkpoint:
+            angles=resolve_geometry(checkpoint,np.loadtxt(data['inputs']['rawtlt'],ndmin=1),data['orientation']['rotation_deg'])[0][active]
         final_protocol=data['final_reconstruction_protocol']
         if final_protocol!='native-wiener-sz-no-reliability-canonical-z-v1':
             raise ValueError('Unsupported final reconstruction protocol; create a new reconstruction.')
         physical_metadata=None
         final_binning=data.get('final_binning') or int(data['inputs']['binning'])
-        if final_binning!=int(data['inputs']['binning']):
+        if final_binning!=int(data['inputs']['binning']) or advanced.get('tomogram_leveling'):
             if final_protocol!='native-wiener-sz-no-reliability-canonical-z-v1':
                 raise ValueError('Independent final binning requires native Wiener reconstruction.')
             from .segmentation_worker import reconstruct
@@ -121,7 +155,9 @@ def run(config):
             volume_shape=list(volume.shape)
         if 'cupy' in sys.modules:
             sys.modules['cupy'].get_default_memory_pool().free_all_blocks()
-        result=dict(state='completed',
+        result=dict(fine_scale_refinement=summary.get('fine_scale_refinement'),geometry_converged=summary.get('geometry_converged',True),
+                    consecutive_stage_failures=summary.get('consecutive_stage_failures',0),
+                    advanced_options=advanced,state='completed',
                     volumes=dict(original=str(original)),shape=volume_shape,final_binning=final_binning,alignment_binning=int(data['inputs']['binning']),
                     voxel_size_A=voxel,contrast_inverted=physical_metadata is None,
                     final_reconstruction_protocol=final_protocol,output_contrast_convention='dark_particles',
@@ -141,6 +177,8 @@ def run(config):
             from greco.final_reconstruction import export_transform
             result.update(final_ctf_filter='wiener_sz',final_reliability=False,
                 internal_to_export_zyx=export_transform(full_shape[0],z_start),export_z_reflected=True)
+        if advanced.get('tomogram_leveling'):
+            result.update(tomogram_leveling=sampled['tomogram_leveling'],internal_to_export_zyx=sampled['internal_to_export_zyx'])
         # Optional final-volume denoising never feeds back into registration.
         from .final_denoising import denoise_outputs
         denoise_outputs(data,result)
@@ -150,6 +188,9 @@ def run(config):
                 result['warning']=f"Excluded {len(excluded)} projections without usable signal. Tomogram uses {len(active)}/{result['total_tilts']} tilts."
             else:
                 result['warning']=f"Greco stopped before the full range: {len(active)}/{result['total_tilts']} accepted tilts. Tomogram uses accepted tilts."
+        if not result['geometry_converged']:
+            result['warning']=' · '.join(filter(None,[result.get('warning'),
+                'Final geometry is provisional: the last refinement round reached its iteration limit.']))
         if data.get('alignment_options') is not None:result['alignment_options']=guidance
         from ..reconstruction_layout import publish
         publish(output,result)

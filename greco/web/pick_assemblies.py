@@ -43,6 +43,10 @@ def activate(data, identifier):
     assembly = next((a for a in data.get('pick_assemblies', []) if a['id'] == identifier), None)
     if assembly is None:
         raise InputError('Unknown pick assembly.')
+    reconstruction_id=assembly.get('reconstruction_assembly_id')
+    if reconstruction_id:
+        from .reconstruction_assemblies import activate as activate_reconstruction
+        activate_reconstruction(data,reconstruction_id)
     data['active_pick_assembly'] = identifier
     for key in ASSETS:
         data.pop(key, None)
@@ -60,7 +64,7 @@ def activate(data, identifier):
         row['pick_assembly_id'] = identifier
 
 
-def create(service, project_id, name=None):
+def create(service, project_id, name=None, reconstruction_id=None):
     with service.lock:
         root = service._root(project_id)
         data = service._read(root)
@@ -72,7 +76,12 @@ def create(service, project_id, name=None):
         name = (name or f'Pick assembly {len(assemblies) + 1:03d}').strip()
         if not name or len(name) > 100:
             raise InputError('Enter a pick assembly name (1–100 characters).')
-        assemblies.append(dict(id=identifier, name=name, series={}))
+        from .reconstruction_assemblies import ensure
+        ensure(data)
+        reconstruction_id=reconstruction_id or data.get('active_reconstruction_assembly')
+        if not any(r['id']==reconstruction_id for r in data.get('reconstruction_assemblies',[])):
+            raise InputError('Choose a reconstruction for this picking assembly.')
+        assemblies.append(dict(id=identifier, name=name, series={},reconstruction_assembly_id=reconstruction_id))
         activate(data, identifier)
         service._write(root, data)
         return service._view(project_id)
@@ -218,7 +227,9 @@ def inactive_rows(data):
             continue
         for row in data['series']:
             saved = assembly.setdefault('series', {}).setdefault(row['id'], {})
-            proxy = dict(row, pick_assembly_id=assembly['id'])
+            from .reconstruction_assemblies import source_row
+            reconstruction_id=assembly.get('reconstruction_assembly_id',data.get('active_reconstruction_assembly'))
+            proxy = dict(source_row(data,row,reconstruction_id),pick_assembly_id=assembly['id'])
             for key in FIELDS:
                 proxy.pop(key, None)
                 if key in saved:

@@ -295,10 +295,10 @@ class ProjectService:
             data = read_json(self, file)
             if data.get("version") != 1 or not isinstance(data.get("series"), list):
                 raise InputError("Unsupported project version.")
-            if data.get('layout_version')!=2 or data.get('preprocessing_layout_version')!=1 or data.get('reconstruction_layout_version')!=2:
+            if data.get('layout_version') not in (2,3) or data.get('preprocessing_layout_version')!=2 or data.get('reconstruction_layout_version') not in (2,3):
                 raise InputError('This project must use the definitive Greco layout.')
         else:
-            data = dict(version=1, layout_version=2, preprocessing_layout_version=1, reconstruction_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
+            data = dict(version=1, layout_version=3, preprocessing_layout_version=2, reconstruction_layout_version=3, segmentation_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
         if self.slurm_store is not None:
             shared = self.slurm_store.load()
             if shared is None and data.get('slurm', {}).get('template'):
@@ -307,13 +307,15 @@ class ProjectService:
                 data['slurm'] = shared
         return data
 
-    def _write(self, root, data):
+    def _write(self, root, data, *, publish=True):
         from .pick_assemblies import capture
         capture(data)
+        from .reconstruction_assemblies import capture as capture_recon
+        capture_recon(data)
         from ..project_layout import initialize
         root.mkdir(parents=True,exist_ok=True)
         previous = self.metadata_cache.previous(root/'project.json')
-        initialize(root,data,previous=previous)
+        if publish:initialize(root,data,previous=previous)
         directory = root
         directory.mkdir(exist_ok=True)
         if not directory.resolve().is_relative_to(root):
@@ -333,6 +335,10 @@ class ProjectService:
     def _view(self, project_id):
         root = self._root(project_id)
         data = self._read(root)
+        from .reconstruction_assemblies import ensure as ensure_reconstructions
+        if ensure_reconstructions(data):self._write(root,data)
+        from .segmentation import ensure_reconstruction_links
+        if ensure_reconstruction_links(root,data):self._write(root,data)
         data["id"] = project_id
         data["path"] = str(root)
         from .slurm_arrays import ensure_indices
@@ -363,6 +369,8 @@ class ProjectService:
         complete = bool(data["series"]) and all(s["status"] == "imported" for s in data["series"])
         active=[s for s in data['series'] if s.get('enabled',True)]
         reconstructed=bool(active) and all(s.get('reconstruction',{}).get('state')=='completed' for s in active)
+        from .reconstruction_assemblies import has_active_jobs
+        reconstructed=reconstructed and not has_active_jobs(data)
         preprocessed=bool(active) and all(s.get('preprocessing',{}).get('state')=='completed' for s in active)
         from .picking_source import source_job
         has_volume=any(source_job(s).get('state') in ('completed','submitted','running') for s in data['series'])
@@ -378,6 +386,7 @@ class ProjectService:
         segmentation_complete=bool(segmentations) and all(
             bool(a.get('tomograms')) and all(bool(t.get('steps')) and all(s.get('state')=='completed' for s in t['steps']) for t in a['tomograms'])
             for a in segmentations)
+        has_volume=has_volume or any(saved.get('reconstruction',{}).get('state') in ('completed','submitted','running') for record in data.get('reconstruction_assemblies',[]) for saved in record.get('series',{}).values())
         data["stages"] = [dict(id="tilts", label="Tilt series", enabled=True, complete=complete),
                           dict(id="preprocessing", label="Preprocessing", enabled=complete, complete=preprocessed),
                           dict(id="reconstruction", label="Reconstruction", enabled=complete, complete=reconstructed),

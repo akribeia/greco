@@ -25,6 +25,8 @@ def submit(service,project_id,series_id,raw=None):
         root=service._root(project_id);data=service._read(root)
         row=next((r for r in data['series'] if r['id']==series_id),None)
         if row is None:raise InputError('Unknown tilt series.')
+        from .queue import guard_preprocessing_dependencies
+        guard_preprocessing_dependencies(data,series_id)
         if not row.get('enabled',True):raise InputError('Enable this tilt series first.')
         current=refresh(service,{'preprocessing':row.get('ctf_redo',{})})
         if current['state'] in ACTIVE:raise InputError('CTF recalculation is already active.')

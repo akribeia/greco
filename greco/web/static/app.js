@@ -32,7 +32,7 @@ function render() {
   renderSidebar();
   renderStages();
   if (state.stage==="tilts") renderTilts(series); else renderNext();
-  if(!['tilts','picking'].includes(state.stage) && series.some(row=>['preprocessing','reconstruction','refinement','angle_refinement','geometry_refinement','picking','handedness_test','ctf_redo'].some(kind=>['submitted','running','submitting','unknown'].includes(row[kind]?.state))))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);
+  if(!['tilts','picking'].includes(state.stage) && projectHasActiveJobs(p))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);
 }
 
 function startGreco() {

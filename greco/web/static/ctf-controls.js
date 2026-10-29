@@ -45,10 +45,10 @@ function mountOrientation(row) {
   const handInput=document.querySelector('[data-preprocess="df_hand"]');
   state.orientationHandPreview=Number(handInput.value);state.orientationHandUnsaved=false;
   const controls=document.createElement('div');controls.className='orientation-controls';
-  controls.innerHTML='<button type="button" class="button secondary" id="axis-toggle" aria-label="Show tilt-axis guide" aria-pressed="false" title="Show vertical tilt-axis guide">[|]</button>';
+  controls.innerHTML='<button type="button" class="button secondary" id="axis-toggle" data-tilt-diagnostic="axis" aria-label="Show tilt-axis guide" aria-pressed="false" title="Show vertical tilt-axis guide">[|]</button>';
   $('tilt-image-area').append(controls);
   const orientationFields=$('ctf-orientation-fields');orientationFields.className='ctf-orientation';
-  orientationFields.innerHTML=`<div class="metadata-field"><label for="orientation-rotation">Axis alignment rotation (°)</label><input id="orientation-rotation" type="number" min="-360" max="360" step="any" value="${esc(state.orientationPreview)}"></div><div class="orientation-turns"><button type="button" class="button secondary" id="orientation-left">↶ −90°</button><button type="button" class="button secondary" id="orientation-right">↷ +90°</button><button type="button" class="button secondary" id="orientation-flip" aria-pressed="${state.orientationFlipY}">Flip Y</button><button type="button" class="button secondary" id="orientation-mdoc">Reset MDOC</button></div><p class="hint">MDOC: ${esc(row.mdoc_tilt_axis_deg ?? 'unknown')}° · Align the tilt axis with the vertical guide. Changes apply to project jobs.</p><p class="hint">Test handedness selects a sign.<br>Submit and Redo apply it.</p>${defocusHandHelp()}`;
+  orientationFields.innerHTML=`<div class="metadata-field"><label for="orientation-rotation">Tilt axis angle β (°)</label><input id="orientation-rotation" type="number" min="-360" max="360" step="any" value="${esc(state.orientationPreview)}"></div><div class="orientation-turns"><button type="button" class="button secondary" id="orientation-left">↶ −90°</button><button type="button" class="button secondary" id="orientation-right">↷ +90°</button><button type="button" class="button secondary" id="orientation-flip" aria-pressed="${state.orientationFlipY}">Flip Y</button><button type="button" class="button secondary" id="orientation-mdoc">Reset MDOC</button></div><p class="hint">MDOC: ${esc(row.mdoc_tilt_axis_deg ?? 'unknown')}° · Align the tilt axis with the vertical guide. Changes apply to project jobs.</p><p class="hint">Test handedness selects a sign.<br>Submit and Redo apply it.</p>${defocusHandHelp()}`;
   const handButton=$('orientation-hand-test'),redoButton=$('orientation-redo-ctf'),redoResult=$('ctf-redo-result');
   redoButton.title='Refit CTF using the settings above and saved motion shifts.';
   const busy={hand:false,redo:false};
@@ -109,17 +109,16 @@ function mountOrientation(row) {
   redoButton.addEventListener('click',()=>watchRedoCTF(true));watchRedoCTF();
   for(const [mode,label,title] of [['comparison','◐','Compare CTF model (left) and measured spectrum (right)'],['landscape','ΔZ','Show saved defocus landscape']]) {
     const button=document.createElement('button');button.type='button';button.className='button secondary ctf-view-toggle';button.textContent=label;button.title=title;button.setAttribute('aria-label',title);button.setAttribute('aria-pressed','false');
-    controls.insertBefore(button,$('axis-toggle'));
-    button.addEventListener('click',()=>{state.ctfView=state.ctfView===mode?null:mode;controls.querySelectorAll('.ctf-view-toggle').forEach(b=>b.setAttribute('aria-pressed',String(b===button&&!!state.ctfView)));showTiltPlane();});
+    button.dataset.tiltDiagnostic=mode;controls.insertBefore(button,$('axis-toggle'));
+    button.addEventListener('click',()=>{selectTiltDiagnostic(mode,controls);showTiltPlane();});
   }
   const preview=value=>{
     value=Math.round((((value+360)%720+720)%720-360)*1e6)/1e6;
     $('orientation-rotation').value=value;state.orientationPreview=value;
     config.rotation_deg=value;config.flip_y=state.orientationFlipY;config.calibrated=true;
-    state.axisVisible=true;$('axis-toggle').setAttribute('aria-pressed','true');
     showTiltPlane();
   };
-  $('axis-toggle').addEventListener('click',()=>{state.axisVisible=!state.axisVisible;$('axis-toggle').setAttribute('aria-pressed',String(state.axisVisible));$('tilt-image-area').classList.toggle('show-axis',state.axisVisible);});
+  $('axis-toggle').addEventListener('click',()=>{selectTiltDiagnostic('axis',controls);$('tilt-image-area').classList.toggle('show-axis',state.axisVisible);});
   $('orientation-rotation').addEventListener('input',()=>{const value=Number($('orientation-rotation').value);if(Number.isFinite(value)&&Math.abs(value)<=360)preview(value);});
   $('orientation-mdoc').disabled=row.mdoc_tilt_axis_deg==null;
   $('orientation-mdoc').addEventListener('click',()=>preview((state.orientationFlipY?-1:1)*Number(row.mdoc_tilt_axis_deg)));

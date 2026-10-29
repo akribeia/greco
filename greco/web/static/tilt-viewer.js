@@ -6,6 +6,7 @@ function tiltDisplayParams(index) {
     ctf_revision:state.preprocessStatus?.ctf_revision ?? '',
     rotation_deg:Number(state.orientationPreview ?? state.project.orientation?.rotation_deg ?? 0),
     flip_y:state.orientationFlipY?'1':'0'});
+  if(state.stage==='reconstruction' && state.reconstructionCTFPreview)params.set('preview_geometry','1');
   if([-1,1].includes(state.orientationHandPreview))params.set('df_hand',state.orientationHandPreview);
   if(Number.isFinite(state.orientationCTFAxisPreview))params.set('axis_deg',state.orientationCTFAxisPreview);
   return params;
@@ -73,6 +74,7 @@ function showCTFView(index) {
     if([-1,1].includes(savedHand))caption.textContent+=` · fitted hand ${savedHand>0?'+1':'−1'}`;
     if(state.orientationHandUnsaved)caption.textContent+=' · selected sign applies after Redo CTF';
   }
+  if(state.stage==='reconstruction' && state.reconstructionCTFPreview && state.ctfView==='landscape')caption.textContent='Defocus preview · selected handedness and axis · CTF will be re-estimated with the final geometry';
   if(!note)area.append(caption);
   layer.onerror=()=>{layer.hidden=true;if(source)source.style.visibility='visible';caption.textContent='CTF view unavailable. Restart the web server if it is outdated; check that this tilt has saved CTF spectra.';};
 }
@@ -96,4 +98,16 @@ function matchTiltBackground(image) {
   const borderCount=count-Math.max(0,canvas.width-2)*Math.max(0,canvas.height-2);
   const background=histogram[mode]>=borderCount*.1?mode:Math.round(sum/count);
   $('tilt-image-area').style.backgroundColor=`rgb(${background}, ${background}, ${background})`;
+}
+
+function selectTiltDiagnostic(mode,controls){
+  if(mode==='axis')state.axisVisible=!state.axisVisible;
+  else{
+    state.ctfView=state.ctfView===mode?null:mode;
+    if(mode==='comparison')state.axisVisible=false;
+  }
+  controls.querySelectorAll('[data-tilt-diagnostic]').forEach(button=>{
+    const kind=button.dataset.tiltDiagnostic;
+    button.setAttribute('aria-pressed',String(kind==='axis'?!!state.axisVisible:state.ctfView===kind));
+  });
 }

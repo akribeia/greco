@@ -271,7 +271,7 @@ def run(original, angles, output, *, selector='bright_structure',
         search_support_diagnostics=False, diagnostic_source=None,
         solver_backend='cpu', cc_method='intensity',
         column_cell=32, column_width=30,
-        entry_search_sigma_px=8., tomogram_thickness_percent=50., gcc_runner=None):
+        entry_search_sigma_px=8., tomogram_thickness_percent=50., gcc_runner=None, exact_extra_rounds=False,stage_acceptor=None):
     """Run the progressive all-active 2D registration in-process.
 
     original: (T, Y, X) float32 bin8 stack (any tilt order).
@@ -350,6 +350,7 @@ def run(original, angles, output, *, selector='bright_structure',
     active = seed.tolist()
     cumulative = np.zeros((t0, 2), float)
     config = dict(
+        exact_extra_rounds=exact_extra_rounds,stage_continuation=stage_acceptor.config if stage_acceptor else None,
         seed_indices=active, seed_angles_deg=angles[seed].tolist(),
         expansion='independent neighbouring frontiers; retry blocked after opposite growth',
         input=('greco raw-source bin8 (CTF+reliability in raw MC raster; '
@@ -407,7 +408,9 @@ def run(original, angles, output, *, selector='bright_structure',
     if (output / 'config.json').exists():
         saved_config = json.loads((output / 'config.json').read_text())
         for key, value, default in [('entry_search_sigma_px', entry_search_sigma_px, 8.),
-                                    ('tomogram_thickness_percent', tomogram_thickness_percent, 50.)]:
+                                    ('tomogram_thickness_percent', tomogram_thickness_percent, 50.),
+                                    ('exact_extra_rounds',exact_extra_rounds,False),
+                                    ('stage_continuation',stage_acceptor.config if stage_acceptor else None,None)]:
             if saved_config.get(key, default) != value:
                 raise ValueError('resume optimizer setting mismatch: ' + key)
         if (saved_config.get('column_cell', 32), saved_config.get('column_width', 30)) != (column_cell, column_width):
@@ -419,6 +422,17 @@ def run(original, angles, output, *, selector='bright_structure',
         _write_json(output / 'config.json', config)
 
     from ..scipy_resample_gpu import shift_stack_scipy_gpu
+
+    def commit_axis(state):
+        nonlocal axis_deg
+        if 'axis_rotation_deg' not in state:return
+        updated=float(state['axis_rotation_deg'])
+        if not np.isfinite(updated):raise ValueError('Nonfinite common raster angle')
+        delta=np.deg2rad(updated-float(axis_deg))
+        old=cumulative.copy()
+        cumulative[:,0]=np.cos(delta)*old[:,0]-np.sin(delta)*old[:,1]
+        cumulative[:,1]=np.sin(delta)*old[:,0]+np.cos(delta)*old[:,1]
+        axis_deg=updated
 
     if raw_source:
         from ..gcc import materialize_raw_stack_gpu
@@ -473,12 +487,16 @@ def run(original, angles, output, *, selector='bright_structure',
                     blocked_incoming = {int(t): int(n) for t,n in geo.get('blocked_incoming',{}).items()}
                     with np.load(stage / 'final_state.npz') as checkpoint:
                         final_state = {key: np.array(checkpoint[key]) for key in checkpoint.files}
+                    if 'axis_rotation_deg' in final_state:axis_deg=float(final_state['axis_rotation_deg'])
                     last_accepted_stage = stage
                     try:
                         trajectory.append(json.loads((stage / 'metrics.json').read_text()))
                     except (OSError, json.JSONDecodeError):
                         pass
-                    if len(active) == t0:
+                    if stage_acceptor is not None:
+                        stage_acceptor.failures=int(acc.get('consecutive_stage_failures',0))
+                        stage_acceptor.stopped=bool(acc.get('continuation_stopped',False))
+                    if len(active) == t0 or (stage_acceptor is not None and stage_acceptor.stopped):
                         break
                     stage_no += 1
                     continue
@@ -528,15 +546,18 @@ def run(original, angles, output, *, selector='bright_structure',
         if incoming and len(proposed) == len(active):
             del stage_score_volume
             reason = 'incoming_cc_rejected'
-            _write_json(stage / 'acceptance.json', dict(accepted=False, reason=reason))
+            decision=stage_acceptor.assess(dict(stop_reason=reason,history=[]),None) if stage_acceptor else {}
+            _write_json(stage / 'acceptance.json', dict(accepted=False, reason=reason,**{k:v for k,v in decision.items() if k!='accepted'}))
             trajectory.append(dict(stage=stage_no, incoming_indices=incoming,
                                    incoming_angles_deg=angles[incoming].tolist(),
                                    active_count=len(active),
                                    angular_min=float(angles[active[0]]),
                                    angular_max=float(angles[active[-1]]),
                                    cc=cc, accepted=False, gcc_stop=None, reason=reason,
+                                   **{k:v for k,v in decision.items() if k!='accepted'},
                                    runtime_s=time.monotonic() - started))
             _write_json(output / 'trajectory.json', trajectory)
+            if stage_acceptor is not None and stage_acceptor.stopped:break
             stage_no += 1
             continue
         directions = stage_column_directions(angles, seed if stage_no == 0 else proposed, stage_no)
@@ -565,8 +586,10 @@ def run(original, angles, output, *, selector='bright_structure',
                                             search_support_diag=search_support_diag,
                                             diag_plane_map=np.asarray(proposed, int))
         _write_json(stage / 'gcc_manifest.json', gcc_manifest)
-        accepted = accepted_stop_reason(gcc_manifest['stop_reason'])
+        decision=stage_acceptor.assess(gcc_manifest,candidate_state) if stage_acceptor else {}
+        accepted = decision['accepted'] if decision else accepted_stop_reason(gcc_manifest['stop_reason'])
         if accepted:
+            commit_axis(candidate_state)
             final_state = candidate_state
             cumulative[proposed] = final_state['cumulative_shifts_yx']
             active = proposed
@@ -576,9 +599,10 @@ def run(original, angles, output, *, selector='bright_structure',
         elif stage_no == 0:
             # Preserve the seed-failure output; later failed trials
             # must never overwrite the last accepted landmark state.
+            commit_axis(candidate_state)
             final_state = candidate_state
         last = gcc_manifest['history'][-1] if gcc_manifest['history'] else {}
-        record = dict(stage=stage_no, incoming_indices=incoming,
+        record = dict(stage=stage_no,axis_rotation_deg=axis_deg, incoming_indices=incoming,
                       incoming_angles_deg=angles[incoming].tolist(),
                       active_count=len(active),
                       angular_min=float(angles[active[0]]),
@@ -601,9 +625,10 @@ def run(original, angles, output, *, selector='bright_structure',
                       runtime_s=time.monotonic() - started,
                       timing_s=dict(selection=sel_report['runtime_s'],
                                     gcc=gcc_manifest['runtime_s']))
+        record.update(decision)
         _write_json(stage / 'metrics.json', record)
         _write_json(stage / 'acceptance.json',
-                    dict(accepted=accepted, reason=gcc_manifest['stop_reason']))
+                    dict(accepted=accepted, reason=gcc_manifest['stop_reason'],**{k:v for k,v in decision.items() if k!='accepted'}))
         _write_json(stage / 'output_geometry.json',
                     dict(active_indices=active, cumulative_shifts_yx=cumulative.tolist(),
                          blocked_incoming=blocked_incoming))
@@ -619,7 +644,7 @@ def run(original, angles, output, *, selector='bright_structure',
     # accepted tilts, even for an incomplete range: reconstruct -> column landmarks ->
     # selection -> GCC starting from the current cumulative shifts.
     # Unaccepted rounds stop the loop without touching the state.
-    if extra_rounds > 0 and last_accepted_stage is not None:
+    if extra_rounds > 0 and last_accepted_stage is not None and not (stage_acceptor is not None and stage_acceptor.stopped):
         for r in range(extra_rounds):
             rdir = output / f'extra_round_{r:02d}'
             rdir.mkdir(exist_ok=True)
@@ -645,13 +670,15 @@ def run(original, angles, output, *, selector='bright_structure',
                                                 search_support_diag=search_support_diag,
                                                 diag_plane_map=np.asarray(active, int))
             _write_json(rdir / 'gcc_manifest.json', gcc_manifest)
-            accepted = accepted_stop_reason(gcc_manifest['stop_reason'])
+            decision=stage_acceptor.assess(gcc_manifest,round_state) if stage_acceptor else {}
+            accepted = decision['accepted'] if decision else accepted_stop_reason(gcc_manifest['stop_reason'])
             if accepted:
+                commit_axis(round_state)
                 cumulative[active] = round_state['cumulative_shifts_yx']
                 final_state = round_state
                 last_accepted_stage = rdir
             last = gcc_manifest['history'][-1] if gcc_manifest['history'] else {}
-            record = dict(stage='extra_round', round=r,
+            record = dict(stage='extra_round', round=r,axis_rotation_deg=axis_deg,
                           active_count=len(active),
                           angular_min=float(angles[active[0]]),
                           angular_max=float(angles[active[-1]]),
@@ -667,9 +694,10 @@ def run(original, angles, output, *, selector='bright_structure',
                           runtime_s=time.monotonic() - started,
                           timing_s=dict(selection=sel_report['runtime_s'],
                                         gcc=gcc_manifest['runtime_s']))
+            record.update(decision)
             _write_json(rdir / 'metrics.json', record)
             _write_json(rdir / 'acceptance.json',
-                        dict(accepted=accepted, reason=gcc_manifest['stop_reason']))
+                        dict(accepted=accepted, reason=gcc_manifest['stop_reason'],**{k:v for k,v in decision.items() if k!='accepted'}))
             _write_json(rdir / 'output_geometry.json',
                         dict(active_indices=active, cumulative_shifts_yx=cumulative.tolist()))
             np.savez_compressed(rdir / 'final_state.npz', **round_state)
@@ -683,7 +711,7 @@ def run(original, angles, output, *, selector='bright_structure',
             # reference: 3 'converged' rounds with flat residuals 0.355/
             # 0.348/0.376).  Keep running only while a round exhausts its
             # pass budget still improving ('max_passes'); N is the backstop.
-            if gcc_manifest['stop_reason'] == 'converged':
+            if gcc_manifest['stop_reason'] == 'converged' and not exact_extra_rounds:
                 break
 
     # final products
@@ -713,7 +741,7 @@ def run(original, angles, output, *, selector='bright_structure',
                         valid_views=final_state['valid_views'],
                         classes=final_state['classes'],
                         angles_deg=angles, active_indices=np.asarray(active, int),
-                        binning=binning)
+                        binning=binning,**({"axis_rotation_deg":axis_deg} if axis_deg is not None else {}))
     sel_final = (last_accepted_stage or stage) / 'selected_landmarks.npz'
     if sel_final.exists():
         with np.load(sel_final) as d:
@@ -727,7 +755,10 @@ def run(original, angles, output, *, selector='bright_structure',
             h.write(f'{i},{angles[i]:.6f},{shifts[i, 0]:.6f},{shifts[i, 1]:.6f},'
                     f'{fullres[i, 0]:.6f},{fullres[i, 1]:.6f}\n')
     _write_json(output / 'summary.json', dict(
-        config_sha256=config['sha256'], stages=len(trajectory),
+        stage_continuation=stage_acceptor.config if stage_acceptor else None,
+        consecutive_stage_failures=stage_acceptor.failures if stage_acceptor else 0,
+        continuation_stopped=stage_acceptor.stopped if stage_acceptor else False,
+        config_sha256=config['sha256'], stages=len(trajectory),final_axis_rotation_deg=axis_deg,
         extra_rounds_run=sum(1 for r in trajectory if r.get('stage') == 'extra_round'),
         active_indices=active, active_angles_deg=angles[active].tolist(),
         excluded_signal_indices=excluded_signal.tolist(),excluded_signal_angles_deg=angles[excluded_signal].tolist(),

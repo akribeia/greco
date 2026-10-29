@@ -113,8 +113,9 @@ def identity(item):
     files=[]
     for key in ('stack','angles',*(('selection',) if item.get('selection') else ())):
         p=Path(item.get('registration_stack',item[key]) if key=='stack' else item[key]);s=p.stat()
-        from ..reconstruction_layout import identity_path
-        files.append(dict(path=identity_path(p),size=s.st_size,mtime_ns=s.st_mtime_ns))
+        # File identity survives renames, but replacement or editing invalidates it.
+        files.append(dict(role=key,device=s.st_dev,inode=s.st_ino,
+                          size=s.st_size,mtime_ns=s.st_mtime_ns))
     value=dict(protocol=PROTOCOL,thresholds=THRESHOLDS,files=files)
     return hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest(),value
 

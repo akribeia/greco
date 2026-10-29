@@ -23,9 +23,9 @@ def clone_cached(source,work):
         return shutil.copy2(src,dst)
     def ignore(folder,names):
         return [name for name in names if name in ('web_result.json','ctf_spectrum.npy','ctf_geometry.json','ctf_local_samples.npz','ctf.star')
-                or name.startswith('greco_ctf') or (name.startswith('reliability_bin') and Path(name).suffix in ('.mrcs','.rawtlt')) or name.startswith('.')]
-    for name in ('motion','alignment'):
-        shutil.copytree(storage_path(source,name),storage_path(work,name),copy_function=copy_file)
+                or name.startswith('flat_reliability_bin') or name.startswith('greco_ctf') or (name.startswith('reliability_bin') and Path(name).suffix in ('.mrcs','.rawtlt')) or name.startswith('.')]
+    for name in ('motion','alignment','stacks'):
+        shutil.copytree(storage_path(source,name),storage_path(work,name),copy_function=copy_file,ignore=lambda folder,names:[n for n in names if n.startswith(('spatial_ctf_','flat_ctf_','aligned_spatial_ctf_'))])
     shutil.copytree(source/'ctf',work/'ctf',copy_function=copy_file,
         ignore=lambda folder,names:ignore(folder,names)+(['handedness'] if 'handedness' in names else []))
     for name in ('manifest.json','ctf/astigmatism.json','alignment2d.json'):
@@ -121,6 +121,7 @@ def run(config):
             args._gain=np.repeat(np.repeat(args._gain,2,axis=0),2,axis=1)
         with mrcfile.mmap(storage_path(output, f'greco_raw_bin{binning}.mrcs'),mode='r') as handle:shape=handle.data.shape
         corrected=np.empty(shape,np.float32)
+        flat=np.empty(shape,np.float32) if binning==8 else None
         half_names=['even','odd'] if any((storage_path(storage_path(source, 'output'), f'greco_ctf_{name}_bin{binning}_rawsource.mrcs')).exists() for name in ('even','odd')) else []
         halves={name:np.empty(shape,np.float32) for name in half_names} or None
         rows=[];lock=threading.Lock()
@@ -128,7 +129,10 @@ def run(config):
             progress('Rebuilding CTF-corrected images',tilt=i+1,total=len(records))
             _stage_b_tilt(args,int(record['mdoc_index']),mdoc,{},
                 (float(record['dy_raw']),float(record['dx_raw'])),None,lock,rows,
-                out_raw8=corrected,raw_only=True,slot=i,out_ctf_halves=halves)
+                out_raw8=corrected,raw_only=True,slot=i,out_ctf_halves=halves,out_flat8=flat)
+        if flat is not None and np.isfinite(flat).all():
+            from ..optimizer.flat_stack import publish
+            publish(output,flat,pixel*8,[float(r['angle_deg']) for r in records],options)
         products={'reliability':corrected,**(halves or {})}
         write_ctf_products(output,binning,pixel,records,products)
         write_table(storage_path(output,'ctf/ctf.star'),rows,'ctf')

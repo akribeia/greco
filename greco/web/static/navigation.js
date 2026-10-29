@@ -4,6 +4,21 @@ function stageStatus(stage) {
   const rows=(state.project?.series || []).filter(row=>row.enabled!==false);
   if(stage.id==='tilts')return {complete:stage.complete,label:stage.complete?'Import complete':'Data import'};
   if(!stage.enabled)return {complete:false,label:'Waiting for the previous stage'};
+  if(stage.id==='reconstruction'){
+    const jobs=[],seen=new Set();
+    const add=job=>{if(!job?.state)return;const key=job.work || job.job_id;if(key && seen.has(key))return;if(key)seen.add(key);jobs.push(job);};
+    const addRow=row=>{add(row.reconstruction);add(row.queued_jobs?.reconstruction);add(row.queued_reconstruction);for(const key of ['geometry_refinement','angle_refinement','refinement'])add(row[key]);for(const step of row.processing_steps || [])add(step.job);};
+    for(const row of state.project.series || [])addRow(row);
+    for(const record of state.project.reconstruction_assemblies || []){
+      if(record.id===state.project.active_reconstruction_assembly)continue;
+      for(const row of Object.values(record.series || {}))addRow(row);
+    }
+    const counts={};for(const job of jobs)counts[job.state]=(counts[job.state] || 0)+1;
+    const busy=['running','submitted','submitting','queued','unknown'].filter(key=>counts[key]);
+    const labels={running:'Running',submitted:'Submitted',submitting:'Submitting',queued:'Queued',unknown:'Unknown',failed:'Failed',cancelled:'Cancelled',partial:'Partial',completed:'Completed'};
+    const keys=busy.length?busy:Object.keys(labels).filter(key=>counts[key]);
+    return {complete:jobs.length>0 && jobs.every(job=>job.state==='completed'),label:keys.map(key=>labels[key]+' '+counts[key]).join(' · ') || 'Ready to configure'};
+  }
   if(stage.id==='sta') {
     const counts={};
     for(const assembly of state.project.particle_assemblies || []) {
@@ -110,5 +125,5 @@ function renderTilts(series) {
   }
   for(const badge of $("workspace").querySelectorAll('.badge'))if(badge.textContent==='Running')badge.classList.add('running');
   clearTimeout(state.projectStatusTimer);
-  if(series.some(row=>(row.picking?.state==='completed' && row.pick_count!==row.picking.pick_count) || ['preprocessing','reconstruction','refinement','angle_refinement','geometry_refinement','picking','handedness_test','ctf_redo'].some(kind=>['submitted','running','submitting','unknown'].includes(row[kind]?.state))))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);
+  if((projectHasActiveJobs(state.project) || series.some(row=>row.picking?.state==='completed' && row.pick_count!==row.picking.pick_count)))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);
 }

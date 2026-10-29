@@ -78,7 +78,7 @@ profiles automatically.
 The installer runs directly from the release without saving `install.py`.
 It verifies the application archive's SHA-256 before installation and downloads
 the Python/GPU dependencies automatically. To select a particular release,
-append `--version 1.0` after `python3.11 -`.
+append `--version 1.1` after `python3.11 -`.
 
 ## Connect and use
 
@@ -191,7 +191,7 @@ Model attribution and component notices are retained under `licenses/`.
 
 ## MATLAB prototype
 
-[MATLAB/](MATLAB/) contains the early alignment prototype. It is included in
+[MATLAB prototype](https://github.com/akribeia/greco/tree/main/MATLAB) contains the early alignment prototype. It is included in
 the repository for reference and excluded from installation releases.
 
 ## License

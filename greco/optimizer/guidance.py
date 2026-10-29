@@ -24,18 +24,48 @@ import numpy as np
 RESCUE_RADIUS_PX=16
 
 
-def run_with_range_rescue(original, raw, angles, landmarks, cumulative, kwargs, *, should_rescue=None):
+def _adaptive_range_rescue(original,raw,angles,landmarks,cumulative,kwargs,should_rescue):
+    budget=kwargs.get('max_passes',120);radius=4;history=[];segments=[];runtime=0.
+    tracks=landmarks;shifts=np.array(cumulative,float,copy=True)
+    while len(history)<budget:
+        state,manifest=original(raw,angles,tracks,shifts,**dict(kwargs,search_radius=radius,max_passes=budget-len(history)))
+        rows=manifest['history'];reason=manifest['stop_reason']
+        segments.append(dict(search_radius_px=radius,passes=len(rows),stop_reason=reason))
+        offset=len(history)
+        history.extend(dict(row,iteration=offset+i+1,search_radius_px=radius) for i,row in enumerate(rows))
+        runtime+=manifest['runtime_s']
+        if not rows:break
+        tracks=state;shifts=state['cumulative_shifts_yx']
+        failed=reason in ('joint_solution_outside_support_or_shift_limit','insufficient_measured_observations')
+        veto=should_rescue() if should_rescue is not None else True
+        if failed and veto and radius<32:
+            radius=16 if radius==4 else 32;continue
+        if reason=='converged' and radius>4:
+            radius=4;continue
+        break
+    if segments[-1]['search_radius_px']!=4 and manifest['stop_reason']=='converged':manifest['stop_reason']='max_passes'
+    state['initial_cumulative_shifts_yx']=np.array(cumulative,float,copy=True)
+    state['round_correction_shifts_yx']=state['cumulative_shifts_yx']-cumulative
+    manifest.update(history=history,last=history[-1] if history else None,passes=len(history),runtime_s=runtime,
+        range_rescue=dict(enabled=True,policy='adaptive_4_16_32_confirm_4',segments=segments))
+    return state,manifest
+
+
+def run_with_range_rescue(original, raw, angles, landmarks, cumulative, kwargs, *, should_rescue=None,rescue_state=None):
     """Retry actual measurements at +/-16, never reuse narrow-window votes.
 
-    A wide pass is followed by normal GCC. Convergence must be established
-    again at the normal range. All attempts share one pass budget.
+    Normal mode follows a wide pass with normal GCC confirmations. Fast
+    supplies shared rescue_state to stay wide across calls and converge
+    there. All attempts share one pass budget.
     """
+    if rescue_state is not None and rescue_state.get('adaptive'):
+        return _adaptive_range_rescue(original,raw,angles,landmarks,cumulative,kwargs,should_rescue)
     budget=kwargs.get('max_passes',60);normal=kwargs.get('search_radius',4)
     tracks=landmarks;shifts=np.array(cumulative,float,copy=True)
-    history=[];runtime=0.;radius=normal;segments=[]
+    history=[];runtime=0.;radius=RESCUE_RADIUS_PX if rescue_state and rescue_state.get('active') else normal;segments=[]
     while len(history)<budget:
         remaining=budget-len(history)
-        options=dict(kwargs,search_radius=radius,max_passes=1 if radius!=normal else remaining)
+        options=dict(kwargs,search_radius=radius,max_passes=1 if radius!=normal and rescue_state is None else remaining)
         state,manifest=original(raw,angles,tracks,shifts,**options)
         rows=manifest['history']
         segments.append(dict(search_radius_px=radius,passes=len(rows),stop_reason=manifest['stop_reason']))
@@ -48,8 +78,10 @@ def run_with_range_rescue(original, raw, angles, landmarks, cumulative, kwargs, 
         peak=rows[-1].get('max_shift',np.nan)
         shift_veto=should_rescue() if should_rescue is not None else np.isfinite(peak) and peak>=normal
         if radius==normal and failed and shift_veto and normal<RESCUE_RADIUS_PX:
-            radius=RESCUE_RADIUS_PX;continue
-        if radius!=normal and manifest['stop_reason']=='max_passes' and rows[-1].get('applied'):
+            radius=RESCUE_RADIUS_PX
+            if rescue_state is not None:rescue_state['active']=True
+            continue
+        if rescue_state is None and radius!=normal and manifest['stop_reason']=='max_passes' and rows[-1].get('applied'):
             radius=normal;continue
         break
     if len(history)>=budget and manifest['stop_reason']!='converged':
@@ -57,11 +89,11 @@ def run_with_range_rescue(original, raw, angles, landmarks, cumulative, kwargs, 
     state['initial_cumulative_shifts_yx']=np.array(cumulative,float,copy=True)
     state['round_correction_shifts_yx']=state['cumulative_shifts_yx']-cumulative
     manifest.update(history=history,last=history[-1] if history else None,passes=len(history),runtime_s=runtime,
-        range_rescue=dict(enabled=True,normal_radius_px=normal,rescue_radius_px=RESCUE_RADIUS_PX,segments=segments,fractional_steps=False))
+        range_rescue=dict(enabled=True,stay_in_rescue=rescue_state is not None,normal_radius_px=normal,rescue_radius_px=RESCUE_RADIUS_PX,segments=segments,fractional_steps=False))
     return state,manifest
 
 
-def guided_gcc(original, strength=.25, rescue_enabled=True):
+def guided_gcc(original, strength=.25, rescue_enabled=True,*,rescue_state=None):
     if strength==0 and not rescue_enabled:return original
     import greco.gcc as gcc
     from .image_constraints import solve_joint_image_constraints
@@ -110,7 +142,7 @@ def guided_gcc(original, strength=.25, rescue_enabled=True):
         options=dict(kwargs,containment_solver=fit)
         if rescue_enabled:
             state,manifest=run_with_range_rescue(original,raw,angles,landmarks,cumulative,options,
-                should_rescue=lambda:bool(evidence and evidence[-1]['shift_limit_violation']))
+                should_rescue=lambda:bool(evidence and evidence[-1]['shift_limit_violation']),rescue_state=rescue_state)
         else:
             state,manifest=original(raw,angles,landmarks,cumulative,**options)
             manifest['range_rescue']=dict(enabled=False,normal_radius_px=kwargs.get('search_radius',4),

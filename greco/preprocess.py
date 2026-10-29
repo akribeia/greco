@@ -270,7 +270,7 @@ def _apply_shifted_transfer(image, transfer):
 
 def _stage_b_tilt(args, idx, mdoc, astig, shift_fullres_yx, out_stack, out_csv_lock, csv_rows,
                   out_stack1=None, out_raw8=None, out_raw1=None, raw_only=False, slot=None,
-                  out_ctf_halves=None):
+                  out_ctf_halves=None, out_flat8=None):
     assembly_started=time.monotonic()
     if raw_only:
         assert out_stack is None and out_stack1 is None,\
@@ -314,6 +314,13 @@ def _stage_b_tilt(args, idx, mdoc, astig, shift_fullres_yx, out_stack, out_csv_l
         from .fourier_binning import fourier_bin_2d_gpu
         raw_binned={name:dev.asnumpy(fourier_bin_2d_gpu(image,args.binning))
                     for name,image in (("full",full),("even",even),("odd",odd))}
+
+    if out_flat8 is not None:
+        if len(frames)<2:
+            out_flat8[slot].fill(np.nan)
+        else:
+            from .optimizer.flat_ctf import alignment_plane
+            out_flat8[slot]=alignment_plane(tdir,ctf_json,vars(args),dict(full=full,even=even,odd=odd),8)
 
     dy, dx = map(float, shift_fullres_yx)
     if not raw_only:
@@ -735,6 +742,7 @@ def run(args):
         out_ctf_halves = ({name: np.empty((len(sel), *plane_shape), np.float32)
                            for name in ("even", "odd")}
                           if args.ctf_half_stacks else None)
+        out_flat8=np.empty((len(sel),*plane_shape),np.float32) if args.raw_source and args.binning==8 else None
         csv_rows = []
         lock = threading.Lock()
         shards = _map_tilts(len(sel), gpus)
@@ -743,7 +751,7 @@ def run(args):
         def assemble(device_id, k):
             return _stage_b_tilt(args, sel[k], mdoc, astig, shifts_fullres[k], out_stack, lock,
                                  csv_rows, out_stack1, out_raw8, out_raw1, raw_only=raw_only,
-                                 slot=k, out_ctf_halves=out_ctf_halves)
+                                 slot=k, out_ctf_halves=out_ctf_halves,out_flat8=out_flat8)
 
         _run_shards(assemble, shards, gpus)
         manifest["stage_b_s"] = time.monotonic() - t0
@@ -767,6 +775,7 @@ def run(args):
         if out_ctf_halves is not None:
             out_ctf_halves = {name: np.ascontiguousarray(stack[order])
                               for name, stack in out_ctf_halves.items()}
+        if out_flat8 is not None:out_flat8=np.ascontiguousarray(out_flat8[order])
         angles = np.asarray(angles)[order]
         if not np.all(np.diff(angles) > 0):
             raise ValueError("output tilt order is not strictly increasing")
@@ -845,6 +854,11 @@ def run(args):
             # frozen 2-D shifts in the RAW MC raster, one row per plane of the
             # raw-source stacks (same angle-sorted order as the mrcs/rawtlt)
             print(f"raw-source bin8 stack written -> {pr8}")
+        if out_flat8 is not None and np.isfinite(out_flat8).all():
+            from .optimizer.flat_stack import publish
+            publish(args.output,out_flat8,mdoc.pixel_size_A*8,angles,vars(args))
+            manifest['flat_alignment_stack']=str(storage_path(args.output,'ctf/flat_reliability_bin8.mrcs'))
+
         if out_ctf_halves is not None:
             for name, stack in out_ctf_halves.items():
                 path = storage_path(args.output, f"greco_ctf_{name}_bin{args.binning}_rawsource.mrcs")

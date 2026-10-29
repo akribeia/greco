@@ -81,6 +81,8 @@ def _render(raw_key,checkpoint_key,config_key,frozen_key,angles_key,aligned_key,
                 source_index=int(active[index])
             if not np.allclose(saved['angles_deg'],angles,atol=1e-4):
                 raise ValueError('Reconstruction display angle identities do not match.')
+            from ..alignment_geometry import resolve
+            axis=float(resolve(saved,angles,axis)[1][source_index])
             shift=saved['cumulative_shifts_yx'][source_index]
             row=rows[source_index];binning=int(config['inputs'].get('binning',8))
             frozen=np.array([float(row['dy_raw']),float(row['dx_raw'])])/binning

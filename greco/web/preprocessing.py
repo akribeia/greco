@@ -222,6 +222,8 @@ def submit(service, project_id, series_ids, raw,*,queue_only=False,only_missing=
                 result=service._view(project_id);result['submission_errors']=[];return result
         for identifier in series_ids:
             row = rows[identifier]
+            from .queue import guard_preprocessing_dependencies
+            guard_preprocessing_dependencies(data,identifier)
             status = refresh(service, row)
             if status.get('state') in ('queued','submitting','submitted','running','unknown'):
                 raise InputError(row['name'] + ': a preprocessing job is already active.')
@@ -302,9 +304,12 @@ def refresh(service, row, live_states=None):
             if live:
                 state = live.splitlines()[0].split('|')[0].split()[0]
             else:
-                status = command_result(['sacct','-X','-n','-P','-j',job['job_id'],'--format=State'],job.get('host','')).splitlines()
-                state = status[0].split('|')[0].split()[0] if status else ''
-            if state in ('FAILED','CANCELLED','TIMEOUT','OUT_OF_MEMORY','NODE_FAIL','BOOT_FAIL','COMPLETED'):
+                from .slurm_arrays import accounting_state
+                state=accounting_state(job['job_id'],command_result,job.get('host',''),live_states)
+            if state=='CANCELLED':
+                job.update(state='pending',last_job_id=job.pop('job_id'),last_slurm_state=state)
+                job.pop('error',None);job.pop('status_error',None)
+            elif state in ('FAILED','TIMEOUT','OUT_OF_MEMORY','NODE_FAIL','BOOT_FAIL','COMPLETED'):
                 job.update(state='failed',error='Slurm: ' + state + '; no complete output. See slurm.err.')
             elif state in ('RUNNING','COMPLETING'):
                 job['state']='running'
@@ -330,6 +335,12 @@ def project_status(service, project_id):
         hosts = {}
         from .pick_assemblies import inactive_rows,save_proxy
         other_picks=list(inactive_rows(data))
+        from .reconstruction_assemblies import inactive_jobs
+        other_reconstructions=list(inactive_jobs(data))
+        for owner,key in other_reconstructions:
+            job=owner[key]
+            if job.get('job_id') and job.get('state') in ('submitted','running','submitting','unknown'):
+                hosts.setdefault(job.get('host',''),set()).add(str(job['job_id']))
         for row,_ in other_picks:
             job=row.get('picking',{})
             if job.get('job_id') and job.get('state') in ('submitted','running','submitting','unknown'):
@@ -365,6 +376,10 @@ def project_status(service, project_id):
                 # Do not replace known states when the scheduler is unreachable.
                 return service._view(project_id)
         changed = False
+        for owner,key in other_reconstructions:
+            if owner[key].get('state') in ('submitted','running','submitting','unknown'):
+                updated=refresh(service,{'preprocessing':owner[key]},live)
+                if updated!=owner[key]:owner[key]=updated;changed=True
         for row,saved in other_picks:
             if row.get('picking') and row['picking'].get('state') in ('submitted','running','submitting','unknown'):
                 updated=refresh(service,{'preprocessing':row['picking']},live)
@@ -430,7 +445,7 @@ def status(service, project_id, series_id):
 
 
 def plane_png(service, project_id, series_id, index, rotation_deg=None,flip_y=False,
-              landscape=False,df_hand=None,axis_deg=None):
+              landscape=False,df_hand=None,axis_deg=None,preview_geometry=False):
     import mrcfile
     import numpy as np
     from PIL import Image
@@ -464,7 +479,7 @@ def plane_png(service, project_id, series_id, index, rotation_deg=None,flip_y=Fa
         from .ctf_view import ctf_png
         # Attach the saved detector field to the unrotated image first.
         # The resulting RGB raster has exactly one display transform.
-        colour=Image.open(io.BytesIO(ctf_png(service,project_id,series_id,index,'landscape'))).convert('RGB')
+        colour=Image.open(io.BytesIO(ctf_png(service,project_id,series_id,index,'landscape',df_hand=df_hand,axis_deg=axis_deg,preview_geometry=preview_geometry))).convert('RGB')
         image=.5*image[...,None]+.5*np.asarray(colour,dtype=np.float32)/255
         background=.5*background+.5*np.array([230,230,235],dtype=np.float32)/255
     image=orient_image(image,rotation_deg,flip_y,background)

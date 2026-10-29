@@ -3,4 +3,4 @@
 GPU preprocessing, reconstruction, particle picking, subtomogram averaging and
 segmentation are managed through a web interface and Slurm jobs.
 """
-__version__ = "1.0"
+__version__ = "1.1"

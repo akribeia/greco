@@ -2,6 +2,7 @@
 from greco.project_layout import join as storage_path, preprocessing_work, config_paths, owned as layout_owned
 import json,re,uuid
 from pathlib import Path
+from .metadata_cache import read_json
 from .projects import InputError
 from .preprocessing import refresh,render_script,command_result
 
@@ -77,7 +78,7 @@ def submit(service, pid, sid, step_id, edits, source_identity, options=None, *, 
         for path in config_paths(root):
             if path.is_relative_to(base):
                 continue
-            if config_uses_work(json.loads(path.read_text()), base):
+            if config_uses_work(read_json(service,path), base):
                 raise InputError('A downstream job already uses this curation. Add another Manual Curation step.')
         (prior, parent) = previous_output(row, step)
         parent = refresh(service, {'preprocessing': parent})

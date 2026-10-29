@@ -171,6 +171,12 @@ def submit(service,project_id,series_ids,raw,*,queue_only=False,assembly_id=None
         if assembly_id and data.get('active_pick_assembly')!=assembly_id:raise InputError('Pick assembly changed; reopen its form.')
         slurm=data.get('slurm',{})
         if not slurm.get('ready'):raise InputError('Save cluster settings first.')
+        from .pick_assemblies import current as current_picker
+        picker=current_picker(data)
+        reconstruction_id=picker.get('reconstruction_assembly_id') if picker else None
+        if reconstruction_id and reconstruction_id!=data.get('active_reconstruction_assembly'):
+            from .reconstruction_assemblies import activate
+            activate(data,reconstruction_id)
         template=data.get('picker_template')
         if not template:raise InputError('Select a template first.')
         template_path=service.path(template['path'])
@@ -247,7 +253,7 @@ def submit(service,project_id,series_ids,raw,*,queue_only=False,assembly_id=None
         data['picking_options']=options;errors=[];array_entries=[]
         for identifier in series_ids:
             row=rows[identifier];work=prepare_work(service,root,row,'picking',queue_only,allowed_dependencies=('preprocessing',selected(row)) if identifier in parents else ())
-            config=dict(inputs[identifier],template=template,mask=mask,options=options,series_id=identifier,series_name=row['name'],pick_assembly_id=data.get('active_pick_assembly'))
+            config=dict(inputs[identifier],reconstruction_assembly_id=reconstruction_id,template=template,mask=mask,options=options,series_id=identifier,series_name=row['name'],pick_assembly_id=data.get('active_pick_assembly'))
             path=storage_path(work, 'config.json');path.write_text(json.dumps(config,indent=2))
             resources=dict(cpus=data.get('preprocessing_options',{}).get('cpus',4),gpus=1)
             (storage_path(work, 'job.sbatch')).write_text(render_script(slurm['template'],work,path,resources,'greco.web.picking_worker'))

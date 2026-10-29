@@ -203,7 +203,12 @@ def raw_sample_bases(centres, cumulative, frozen, axis_deg, size):
     centres: (L, T, 2); cumulative: (T, 2); frozen: (T, 2).
     Returns (base_y, base_x), each (L, T).
     """
-    M00, M01, M10, M11, c0 = raw_affine(axis_deg, size)
+    if np.ndim(axis_deg):
+        a=np.deg2rad(np.asarray(axis_deg,float))
+        if a.shape!=(centres.shape[1],) or not np.isfinite(a).all():raise ValueError('Invalid per-view raster angles')
+        M00=np.cos(a);M01=np.sin(a);M10=-np.sin(a);M11=np.cos(a);c0=(size-1)/2.
+    else:
+        M00, M01, M10, M11, c0 = raw_affine(axis_deg, size)
     cumulative = np.asarray(cumulative, float)
     frozen = np.asarray(frozen, float)
     p = np.asarray(centres, float) - cumulative[None, :, :]
@@ -215,6 +220,10 @@ def raw_sample_bases(centres, cumulative, frozen, axis_deg, size):
 
 
 def _rotated_offsets(radius, axis_deg):
+    if np.ndim(axis_deg):
+        values=[_rotated_offsets(radius,float(a)) for a in axis_deg]
+        return (np.stack([v[0] for v in values]),np.stack([v[1] for v in values]),
+                np.array([v[2] for v in values]),np.array([v[3] for v in values]))
     M00, M01, M10, M11, _ = raw_affine(axis_deg, 0)
     offy, offx = np.mgrid[-radius:radius + 1, -radius:radius + 1].astype(float)
     roty = (M00 * offy + M01 * offx).astype(np.float32)
@@ -256,25 +265,27 @@ def _raw_patch_coordinates_gpu(base_y, base_x, roty, rotx):
     if _raw_patch_coordinates_kernel is None:
         _raw_patch_coordinates_kernel = cp.ElementwiseKernel(
             'raw float32 by, raw float32 bx, raw float32 dy, raw float32 dx, '
-            'int32 tilts, int32 n, int64 count', 'raw float32 coords',
+            'int32 tilts, int32 n, int32 per_view, int64 count', 'raw float32 coords',
             r"""
             long long row = i / ((long long)n * n);
             long long pixel = i % ((long long)n * n);
+            if(per_view)pixel += (row % tilts) * n * n;
             coords[i] = (float)(row % tilts);
             float y, x;
             asm("add.rn.f32 %0, %1, %2;" : "=f"(y) : "f"(by[row]), "f"(dy[pixel]));
             asm("add.rn.f32 %0, %1, %2;" : "=f"(x) : "f"(bx[row]), "f"(dx[pixel]));
             coords[count + i] = y;
             coords[2 * count + i] = x;
-            """, 'greco_raw_patch_coordinates', options=('--fmad=false',))
+            """, 'greco_raw_patch_coordinates_views', options=('--fmad=false',))
     landmarks, tilts = base_y.shape
-    n = roty.shape[0]
+    n = roty.shape[-1]
+    per_view=int(roty.ndim==3)
     coords = cp.empty((3, landmarks, tilts, n, n), cp.float32)
     count = landmarks * tilts * n * n
     if count:
         _raw_patch_coordinates_kernel(cp.asarray(np.asarray(base_y, np.float32)),
             cp.asarray(np.asarray(base_x, np.float32)), cp.asarray(roty), cp.asarray(rotx),
-            tilts, n, count, coords, size=count)
+            tilts, n, per_view, count, coords, size=count)
     return coords
 
 
@@ -318,6 +329,7 @@ def raw_search_regions_gpu(original_dev, target, base_yx, extent, axis_deg):
     base_yx: (R, 2) raw-raster bases of the target centres.
     """
     cp, map_coordinates = _gpu()
+    if np.ndim(axis_deg):axis_deg=float(np.asarray(axis_deg)[target])
     roty, rotx, _, _ = _rotated_offsets(extent, axis_deg)
     r = len(base_yx)
     n = 2 * extent + 1
@@ -344,6 +356,25 @@ def materialize_raw_stack_gpu(original_dev, plane_idx, cumulative, frozen,
     """
     cp, map_coordinates = _gpu()
     t, y, x = original_dev.shape
+    if np.ndim(axis_deg):
+        axis=np.asarray(axis_deg,float)
+        if axis.shape!=(len(plane_idx),) or not np.isfinite(axis).all():raise ValueError('Invalid materialization raster angles')
+        out=cp.empty((len(plane_idx),y,x),cp.float32)
+        yy,xx=np.mgrid[:y,:x].astype(np.float32);c0=(y-1)/2
+        a=np.deg2rad(axis);co=np.cos(a);si=np.sin(a)
+        cumulative=np.asarray(cumulative,float);frozen=np.asarray(frozen,float)
+        for first in range(0,len(plane_idx),chunk):
+            end=min(first+chunk,len(plane_idx))
+            py=yy[None]-c0-cumulative[first:end,0,None,None]
+            px=xx[None]-c0-cumulative[first:end,1,None,None]
+            ry=co[first:end,None,None]*py+si[first:end,None,None]*px+c0-frozen[first:end,0,None,None]
+            rx=-si[first:end,None,None]*py+co[first:end,None,None]*px+c0-frozen[first:end,1,None,None]
+            coords=cp.stack((cp.broadcast_to(cp.asarray(plane_idx[first:end],cp.float32)[:,None,None],(end-first,y,x)),cp.asarray(ry),cp.asarray(rx)))
+            vals=map_coordinates(original_dev,coords,order=1,mode='constant',cval=0.)
+            oob=(coords[1]<0)|(coords[1]>y-1)|(coords[2]<0)|(coords[2]>x-1)
+            fill=cp.stack([original_dev[int(k)].mean() for k in plane_idx[first:end]])[:,None,None]
+            out[first:end]=cp.where(oob,fill,cp.asarray(vals,cp.float32))
+        return out
     M00, M01, M10, M11, c0 = raw_affine(axis_deg, y)
     cumulative = np.asarray(cumulative, float)
     frozen = np.asarray(frozen, float)
@@ -477,7 +508,7 @@ def run_gcc(original, angles, initial_tracks, initial_cumulative, *,
             subset_agreement_every=5, resample='exact',
             source='treated', frozen_shifts_yx=None, axis_deg=None,
             trace_planes=None, search_support_diag=None, diag_plane_map=None,
-            containment_solver=None):
+            containment_solver=None, measurement_rms_ratio=None, normal_radius_only=False):
     """Run the validated full-support LOO GCC loop in-process on the GPU.
 
     original: (T, Y, X) float32 bin8 stack (CPU or GPU); T = len(angles).
@@ -560,288 +591,31 @@ def run_gcc(original, angles, initial_tracks, initial_cumulative, *,
     if valid.shape != (len(positions), len(angles)):
         raise ValueError('input tracks, stack and angles do not match')
 
-    from .helpers import soft_spherical_mask, transfer_cache_for_supports, projected_centres
-    from .registration import cosine_disk_mask, sample_search_region
-    from .local_loo_gpu import BatchedLocalLOOWBPGPU
-    from .local_projection_gpu import project_local_volumes_gpu_device
-    from .local_registration_gpu import register_local_models_gpu
-    from .angular_transfer_gpu import (angular_transfer_operator_gpu,
-        apply_angular_transfer_operator_gpu)
-    from .solver import projection_jacobians, subpixel_patch_stacks
-    from .stack_materialization import materialize_cumulative_stack
-    from .scipy_resample_gpu import shift_stack_scipy_gpu, patch_stack_scipy_gpu
-
-    mask3d = cp.asarray(soft_spherical_mask(), cp.float32)
-    mask2d = cosine_disk_mask()
-    support_rows, support_masks = _loo_support_table(valid)
-    support_valid = valid.copy()
-    loo_supports = list(support_masks.values())
-    solver_workspace = {}
-    transfer_cache = transfer_cache_gpu(
-        transfer_cache_for_supports(angles, loo_supports, size=33))
-
-    operator_cache = _angular_operators_batched(
-        transfer_cache, list(transfer_cache), wiener_lambda,
-        max_inverse_gain, lowpass_fraction)
-
-    def operator_lookup(key):
-        operator = operator_cache.get(key)
-        if operator is None:
-            operator = angular_transfer_operator_gpu(
-                transfer_cache[key], wiener_lambda, max_inverse_gain,
-                lowpass_fraction)
-            operator_cache[key] = operator
-        return operator
-
-    if resample == 'exact':
-        # per-plane border value = plane mean, exactly as the reference
-        # scipy ndi_shift CPU path computes it
-        exact_cvals = cp.asarray(
-            np.asarray([float(im.mean()) for im in original_host], np.float64))
-
-    def _materialize(cum):
-        if source in ('raw', 'raw_materialized_control'):
-            # aligned raster = raw MC raster sampled on the fly with
-            # rotation + frozen shift + cumulative shift
-            return materialize_raw_stack_gpu(original_dev, np.arange(len(cum)),
-                                             cum, frozen, axis_deg)
-        if resample == 'cpu':
-            return materialize_cumulative_stack(original_host, cum)
-        if resample == 'fast':
-            return materialize_cumulative_stack_gpu(original_dev, cum)
-        # 'exact': bit-exact GPU replica of the reference scipy ndi_shift
-        return shift_stack_scipy_gpu(original_dev, cp.asarray(cum, np.float64),
-                                     exact_cvals)
-
-    current = None if source == 'raw' else _materialize(cumulative)
-    history = []
-    stable_passes = 0
-    stop_reason = 'max_passes'
+    from .gcc_observations import measure_observations
+    from .solver import projection_jacobians
+    measurement_context={}
+    solver_workspace={}
+    history=[]
+    stable_passes=0
+    stop_reason='max_passes'
+    first_measured_rms=None
 
     for iteration in range(1, max_passes + 1):
         iteration_started = time.monotonic()
         timing = {}
         stamp = time.monotonic()
-        centres = projected_centres(positions, angles, size)
-        valid_pass = valid
-        if source == 'raw':
-            by, bx = raw_sample_bases(centres, cumulative, frozen, axis_deg, size)
-            patches, raw_inside = raw_patch_stacks_gpu(
-                original_dev, by, bx, valid, 16, axis_deg)
-            valid_pass = valid & raw_inside
-        elif source == 'raw_materialized_control':
-            # DIAGNOSTIC control: the raw-raster stack is already
-            # materialized to the aligned raster in ``current`` (see the
-            # _materialize branch above), so patches are extracted with the
-            # SAME aligned-raster bit-exact path as treated 'exact' mode.
-            # This isolates the raw DATA from the on-the-fly raw sampler.
-            extraction = centres.copy()
-            extraction[~valid] = (size - 1) / 2.0
-            patches = patch_stack_scipy_gpu(current, cp.asarray(extraction, np.float64),
-                                            16, cval=0.0).get()
-            valid_pass = np.array(valid, copy=True)
-            n_const = 0
-            for l in range(patches.shape[0]):
-                for t in range(patches.shape[1]):
-                    p = patches[l, t].copy()
-                    p -= p.mean()
-                    scale = float(p.std())
-                    if valid[l, t] and scale < 1e-6:
-                        # fill-only patch: the footprint lies entirely outside
-                        # the raw FOV for this view (plane-mean fill), so it
-                        # carries no information.  In the treated 'exact' path
-                        # this is asserted impossible (valid centres stay
-                        # inside the 16-px margin); in the control the raw FOV
-                        # is smaller than the aligned plane, so at high tilt
-                        # and after cumulative updates it can happen.  Mask
-                        # the view for this landmark (diagnostic only) rather
-                        # than aborting the control run.
-                        n_const += 1
-                        valid_pass[l, t] = False
-                        patches[l, t] = 0.0
-                        continue
-                    patches[l, t] = p / (scale if scale >= 1e-6 else 1.0)
-            patches = cp.asarray(patches, cp.float32)
-            if n_const:
-                print(f"raw_materialized_control: iteration {iteration}: "
-                      f"masked {n_const} fill-only (constant) valid patch(es)",
-                      flush=True)
-        elif resample == 'cpu':
-            extraction = centres.copy()
-            extraction[~valid] = (size - 1) / 2.0
-            patches = cp.asarray(subpixel_patch_stacks(current, extraction), cp.float32)
-        elif resample == 'fast':
-            patches = subpixel_patch_stacks_gpu(current, centres, valid)
-        else:  # 'exact': bit-exact GPU replica of the reference patches
-            extraction = centres.copy()
-            extraction[~valid] = (size - 1) / 2.0
-            if np.any((extraction[valid] < 16) | (extraction[valid] > size - 1 - 16)):
-                raise ValueError('landmark patch outside detector support')
-            patches = patch_stack_scipy_gpu(current, cp.asarray(extraction, np.float64),
-                                             16, cval=0.0).get()
-            # same per-patch float32 normalization as subpixel_patch_stacks
-            # (the raw GPU resampling above is bit-exact vs map_coordinates)
-            for l in range(patches.shape[0]):
-                for t in range(patches.shape[1]):
-                    p = patches[l, t].copy()
-                    p -= p.mean()
-                    scale = float(p.std())
-                    if scale < 1e-6:
-                        raise ValueError('constant landmark patch')
-                    patches[l, t] = p / scale
-            patches = cp.asarray(patches, cp.float32)
-        timing['extract_s'] = time.monotonic() - stamp
+        evidence=measure_observations(original_host if original_host is not None else original_dev,angles,
+            dict(positions_zyx=positions,valid_views=valid,classes=classes),cumulative,
+            search_radius=search_radius,gcc_alpha=gcc_alpha,wiener_lambda=wiener_lambda,
+            max_inverse_gain=max_inverse_gain,lowpass_fraction=lowpass_fraction,
+            source=source,frozen_shifts_yx=frozen,axis_deg=axis_deg,resample=resample,
+            search_support_diag=search_support_diag,diag_plane_map=diag_plane_map,
+            iteration=iteration,context=measurement_context)
+        common_before,common_after=[],[]
+        votes=evidence['votes'];score_surfaces=evidence['score_surfaces']
+        predicted_rows=evidence['predicted_rows'];prominences=evidence['prominences'];curvatures=evidence['curvatures']
+        boundary_count=evidence['boundary_count'];multimodal_count=evidence['multimodal_count'];timing=evidence['timing_s']
 
-        stamp = time.monotonic()
-        loo_indices = np.flatnonzero(valid_pass.sum(axis=1) >= 2)
-        loo = BatchedLocalLOOWBPGPU(patches[loo_indices], angles, valid_pass[loo_indices])
-        timing['loo_setup_s'] = time.monotonic() - stamp
-
-        # raw mode: valid_pass (valid & raw_inside) can shrink each pass, so
-        # the per-(landmark,target) LOO supports can be keys the initial
-        # cache does not hold.  Compute every missing support for this pass
-        # in ONE batched call instead of one at a time inside the target
-        # loop.  The batched WBP is row-independent (each row is scaled by
-        # its own valid.sum, FFT/gather are per-row), so a key computed in a
-        # batch of N is bit-identical to one computed in a batch of 1.
-        if not np.array_equal(valid_pass, support_valid):
-            support_rows, support_masks = _loo_support_table(valid_pass)
-            support_valid = valid_pass.copy()
-        if source in ('raw', 'raw_materialized_control'):
-            missing = {key: mask for key, mask in support_masks.items()
-                       if key and key not in transfer_cache}
-            if missing:
-                transfer_cache.update(transfer_cache_gpu(
-                    transfer_cache_for_supports(angles, list(missing.values()), size=33)))
-
-        votes = np.full((len(positions), len(angles), 2), np.nan, np.float32)
-        score_surfaces = np.full((len(positions), len(angles),
-                                  2 * search_radius + 1, 2 * search_radius + 1), np.nan, np.float32)
-        boundary_count = multimodal_count = 0
-        prominences, curvatures, common_before, common_after = [], [], [], []
-        predicted_rows = []
-        registration_models = []
-        registration_regions = []
-        registration_pairs = []
-
-        stamp = time.monotonic()
-        for target, angle in enumerate(angles):
-            for local_ids, raw_models in loo.iter_target_models(target):
-                landmark_ids = loo_indices[local_ids]
-                if not len(landmark_ids):
-                    continue
-                gpu_operators = []
-                for r, landmark in enumerate(landmark_ids):
-                    gpu_operators.append(operator_lookup(support_rows[landmark][target]))
-                models = apply_angular_transfer_operator_gpu(
-                    raw_models, cp.stack(gpu_operators)) * mask3d[None]
-                projected_models = project_local_volumes_gpu_device(models, float(angle))
-                target_centres = centres[landmark_ids, target]
-                target_valid = valid_pass[landmark_ids, target]
-                # batched search regions for this target.  The aligned-raster
-                # box gate is the reference (treated) contract.  In raw mode the
-                # sampled window is a ROTATED footprint in the RAW raster
-                # (half-width ~1.095*extent at -84.25 deg, plus the frozen-shift
-                # offset of the raw base), so the aligned box does NOT guarantee
-                # raw support: a window whose rotated footprint leaves the raw
-                # detector would be sampled with constant fill (cval=0) and bias
-                # the GCC vote.  The raw gate therefore additionally requires
-                # the full rotated footprint to be inside (raw_search_support).
-                extent = 33 // 2 + search_radius
-                inside = (target_valid & np.all(target_centres >= extent, axis=1)
-                          & np.all(target_centres <= size - 1 - extent, axis=1))
-                if source == 'raw':
-                    inside = inside & raw_search_support(
-                        by[landmark_ids, target], bx[landmark_ids, target],
-                        extent, axis_deg, size)
-                    if search_support_diag is not None:
-                        # diagnostic only (zero effect on the fit): per target,
-                        # the candidate set under the aligned-raster gate and
-                        # whether the FULL rotated raw search footprint is
-                        # inside the raw detector.  Independent of the gate
-                        # above, so the same run reports what the PRE-fix code
-                        # would have fed to the sampler.
-                        ac = np.flatnonzero(target_valid
-                                            & np.all(target_centres >= extent, axis=1)
-                                            & np.all(target_centres <= size - 1 - extent, axis=1))
-                        if len(ac):
-                            bys = by[landmark_ids[ac], target]
-                            bxs = bx[landmark_ids[ac], target]
-                            oob = ~raw_search_support(bys, bxs, extent, axis_deg, size)
-                            _, _, d_ext_y, d_ext_x = _rotated_offsets(extent, axis_deg)
-                            # footprint-edge clearance (negative == out of bounds)
-                            clr = np.minimum(np.minimum(bys - d_ext_y, size - 1 - bys - d_ext_y),
-                                             np.minimum(bxs - d_ext_x, size - 1 - bxs - d_ext_x))
-                            entry = search_support_diag.setdefault('targets', {}).setdefault(
-                                int(np.asarray(diag_plane_map)[target]),
-                                dict(gcc_passes=0, n_candidate=0, n_raw_oob=0, clearances=[]))
-                            entry['gcc_passes'] += 1
-                            entry['n_candidate'] += int(len(ac))
-                            entry['n_raw_oob'] += int(np.sum(oob))
-                            entry['clearances'].extend(np.asarray(clr, float).tolist())
-                rows = np.flatnonzero(inside)
-                if not len(rows):
-                    continue
-                if source == 'raw':
-                    base_yx = np.stack((by[landmark_ids[rows], target],
-                                        bx[landmark_ids[rows], target]), axis=1)
-                    regions = raw_search_regions_gpu(original_dev, target, base_yx,
-                                                     extent, axis_deg)
-                elif source == 'raw_materialized_control':
-                    # DIAGNOSTIC control: aligned-raster sampling from the
-                    # materialized stack, exactly the treated 'exact' regions.
-                    regions = patch_stack_scipy_gpu(
-                        current[target:target + 1],
-                        cp.asarray(target_centres[rows][:, None, :], np.float64),
-                        extent, cval=0.0)[:, 0]
-                elif resample == 'cpu':
-                    # reference driver: per-landmark scipy sampling (default cval 0.0)
-                    regions = np.stack([sample_search_region(current[target],
-                                   target_centres[r], 33, search_radius) for r in rows])
-                elif resample == 'fast':
-                    n = 2 * extent + 1
-                    off = np.mgrid[-extent:extent + 1, -extent:extent + 1].astype(np.float32)
-                    cys = target_centres[rows, 0].astype(np.float32)
-                    cxs = target_centres[rows, 1].astype(np.float32)
-                    coords = cp.stack((
-                        cp.broadcast_to(cp.full(len(rows), float(target), cp.float32)[:, None, None],
-                                        (len(rows), n, n)),
-                        cp.broadcast_to(cp.asarray(cys)[:, None, None], (len(rows), n, n)) + cp.asarray(off[0]),
-                        cp.broadcast_to(cp.asarray(cxs)[:, None, None], (len(rows), n, n)) + cp.asarray(off[1]),
-                    )).astype(cp.float32)
-                    regions = cp.asarray(map_coordinates(current, coords, order=1, mode='constant'), cp.float32)
-                else:  # 'exact': bit-exact GPU replica of the reference regions
-                    regions = patch_stack_scipy_gpu(
-                        current[target:target + 1],
-                        cp.asarray(target_centres[rows][:, None, :], np.float64),
-                        extent, cval=0.0)[:, 0]
-                registration_models.append(projected_models[rows])
-                registration_regions.append(regions)
-                registration_pairs.extend((int(landmark), int(target))
-                                          for landmark in landmark_ids[rows])
-                del raw_models, models, projected_models
-        del loo
-
-        # Registration used to return to the host once per target tilt.  Queue
-        # every independent model/region pair for this pass and synchronize
-        # only once. Larger batches preserve each pair's independent
-        # correlation arithmetic and avoid repeated GPU/host overhead.
-        if registration_pairs:
-            results = register_local_models_gpu(
-                cp.concatenate(registration_models), cp.concatenate(registration_regions),
-                method='generalized_cc', search_radius=search_radius,
-                alpha=gcc_alpha, mask=mask2d, batch_size=1024)
-            for (landmark, target), result in zip(registration_pairs, results, strict=True):
-                boundary_count += int(result.boundary)
-                multimodal_count += int(result.multimodal)
-                if result.valid:
-                    votes[landmark, target] = result.correction_yx
-                    score_surfaces[landmark, target] = result.surface
-                    prominences.append(result.peak_prominence)
-                    if np.isfinite(result.hessian_eigenvalues[1]):
-                        curvatures.append(-result.hessian_eigenvalues[1])
-                    predicted_rows.append((landmark, target, result.zero_score))
-        timing['tilts_s'] = time.monotonic() - stamp
 
         stamp = time.monotonic()
         try:
@@ -875,6 +649,11 @@ def run_gcc(original, angles, initial_tracks, initial_cumulative, *,
         observed = np.isfinite(votes).all(axis=2)
         projected_landmark_norm = np.linalg.norm(projected_dr, axis=2)[observed]
         raster_stable = _xy_update_is_stable(shifts, stop_shift, stop_shift_p90)
+        if measurement_rms_ratio is not None:
+            measured=float(report.get('rms_before',np.sqrt(np.mean(votes[np.isfinite(votes).all(2)]**2))))
+            if first_measured_rms is None:first_measured_rms=measured
+            raster_stable=raster_stable and measured<=measurement_rms_ratio*first_measured_rms
+        if normal_radius_only:raster_stable=raster_stable and search_radius==4
         stable_passes = stable_passes + 1 if raster_stable else 0
         compute_subset = subset_agreement_every > 0 and (
             iteration == 1 or iteration % subset_agreement_every == 0 or iteration == max_passes)
@@ -916,8 +695,6 @@ def run_gcc(original, angles, initial_tracks, initial_cumulative, *,
         cumulative += shifts
         stamp = time.monotonic()
         positions = new_positions
-        if source != 'raw':
-            current = _materialize(cumulative)
         timing['apply_s'] = time.monotonic() - stamp
         if trace_planes is not None:
             entry['trace_cumulative'] = {int(p): [float(cumulative[p, 0]),

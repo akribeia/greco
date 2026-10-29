@@ -1,8 +1,10 @@
 "use strict";
 
 function mountPickingSource(row){
+  const reconstructionId=state.project.active_reconstruction_assembly;
   const currentSource=['reconstruction','geometry_refinement','manual_curation'].includes(row.picking_source)?row.picking_source:'reconstruction';
-  const locations=[['reconstruction',$('reconstruct-step-header')]];
+  const card=document.querySelector(`[data-reconstruction-id="${state.project.active_reconstruction_assembly}"]`);
+  const locations=[['reconstruction',card?.querySelector('.reconstruction-root-actions')]];
   for(const [kind,target] of locations){
     if(!target)continue;
     if(target.tagName==='SUMMARY')target.closest('details').dataset.pickingSourceFold=kind;
@@ -10,7 +12,7 @@ function mountPickingSource(row){
     target.insertAdjacentHTML('beforeend',`<label class="picking-source-choice" title="Select another output to change the picking source"><input type="checkbox" data-picking-source="${kind}" ${currentSource===kind?'checked':''} ${available?'':'disabled'}>Select reconstruction</label>`);
     target.insertAdjacentHTML('beforeend',`<button type="button" class="button secondary assembly-delete-button" id="reconstruction-delete" ${available?'':'disabled'}>Delete</button>`);
   }
-  $('reconstruction-delete')?.addEventListener('click',()=>confirmPreprocessingDeletion(selectedSeries().reconstruction,'reconstruction'));
+  $('reconstruction-delete')?.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();confirmPreprocessingDeletion(selectedSeries().reconstruction,'reconstruction');});
   document.querySelectorAll('[data-picking-source]').forEach(input=>{
     input.closest('label').addEventListener('click',event=>event.stopPropagation());
     input.addEventListener('change',async()=>{
@@ -23,8 +25,8 @@ function mountPickingSource(row){
       controls.forEach(c=>{c.disabled=true;c.checked=c.dataset.pickingSource===choice && (choice==='reconstruction' || c.dataset.pickingStep===stepId);});
       try{
         if(stepId)await requireLinearSteps();
-        const project=await api('/api/picking-source',{project_id:pid,series_id:sid,source:choice,step_id:stepId});
-        if(state.project?.id!==pid)return;
+        const project=await api('/api/picking-source',{project_id:pid,series_id:sid,source:choice,step_id:stepId,reconstruction_id:reconstructionId});
+        if(state.project?.id!==pid || state.project.active_reconstruction_assembly!==reconstructionId)return;
         const saved=project.series.find(item=>item.id===sid);
         if(!saved)throw new Error('The tilt series no longer exists.');
         const current=state.project.series.find(item=>item.id===sid);
@@ -66,6 +68,7 @@ function processingStepInput(row,step){
   return prior?processingStepJob(row,prior):row.reconstruction;
 }
 function processingStepPanels(row){
+  if(reconstructionAssembly()?.mode==='advanced')return '';
   return `<div class="processing-step-list">${processingSteps(row).map((step,index)=>{
     const geometry=step.kind==='geometry_refinement',job=processingStepInput(row,step);
     const checked=row.picking_source===step.kind && (row.picking_step_id || 'geometry')===step.id;
@@ -74,10 +77,13 @@ function processingStepPanels(row){
 }
 function mountReconstructionSteps(row){
   state.activeGeometryStep=null;state.activeCurationStep=null;
-  document.querySelectorAll('[data-add-step]').forEach(button=>button.addEventListener('click',async()=>{
+  const reconstructionId=state.project.active_reconstruction_assembly,projectId=state.project.id;
+  const container=document.querySelector(`[data-reconstruction-id="${reconstructionId}"]`) || $('workspace');
+  container.querySelectorAll('[data-add-step]').forEach(button=>button.addEventListener('click',async()=>{
     button.disabled=true;
     try{
-      const project=await api('/api/reconstruction-step-create',{project_id:state.project.id,series_id:row.id,kind:button.dataset.addStep});
+      const project=await api('/api/reconstruction-step-create',{project_id:projectId,series_id:row.id,kind:button.dataset.addStep,reconstruction_id:reconstructionId});
+      if(state.project?.id!==projectId || state.project.active_reconstruction_assembly!==reconstructionId)return;
       saveProject(project);const last=processingSteps(selectedSeries()).at(-1);
       document.querySelector(`[data-step-id="${last.id}"]`).open=true;
     }catch(error){notify(error.message);button.disabled=false;}

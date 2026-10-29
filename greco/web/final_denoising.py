@@ -23,7 +23,7 @@ def prepare_model_reuse(root, row, options, inputs, final_binning=8):
     if not options.get('reuse_tinycare_model'):
         return {}
     import mrcfile
-    from ..project_layout import owned, series_directory
+    from ..project_layout import owned
     from .._tinycare.config import model_metadata
     from .projects import InputError
     jobs = []
@@ -50,8 +50,6 @@ def prepare_model_reuse(root, row, options, inputs, final_binning=8):
             continue
         model = Path(model).resolve()
         if not any((model.is_relative_to(owner) for owner in owners)):
-            continue
-        if not model.is_relative_to(series_directory(root, row).resolve()):
             continue
         try:
             (_, weights) = model_metadata(model, pixel)

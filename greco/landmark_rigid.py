@@ -1,12 +1,15 @@
 """Landmark adapter for the exact rigid-frame objective used by polishing."""
 import numpy as np
 from .sta.gp3d import MotionObjective
-from .sta.rigid_polishing import RigidMotionObjective,fit_rigid_motion,rotations_and_derivatives
+from .sta.rigid_polishing import RigidMotionObjective,rotations_and_derivatives
 
 
 def initial_cameras(angles,axis):
     values=np.zeros((len(angles),3));values[:,1]=-np.deg2rad(angles)
     ry=rotations_and_derivatives(values)[0]
+    if np.ndim(axis):
+        rolls=np.zeros((len(angles),3));rolls[:,2]=np.deg2rad(axis)
+        return rotations_and_derivatives(rolls)[0]@ry
     rz=rotations_and_derivatives(np.array([[0.,0.,np.deg2rad(axis)]]))[0][0]
     return rz[None]@ry
 

@@ -92,6 +92,7 @@ def extraction_geometry(path,expected_angles):
     """Select angles and shifts by the same accepted acquisition identities."""
     with np.load(path,allow_pickle=False) as saved:
         angles=np.asarray(saved['angles_deg'],float)
+        fitted=np.asarray(saved.get('refined_angles_deg',angles),float)
         active=np.asarray(saved['active_indices'])
         shifts=np.asarray(saved['cumulative_shifts_yx'],float)
     expected=np.asarray(expected_angles,float)
@@ -104,7 +105,8 @@ def extraction_geometry(path,expected_angles):
     if shifts.shape!=(len(angles),2) or not np.isfinite(shifts).all():
         raise ValueError('Accepted geometry has inconsistent tilt shifts.')
     active=active.astype(int)
-    return angles[active],active,shifts[active]
+    if fitted.shape!=angles.shape or not np.isfinite(fitted).all():raise ValueError("Invalid refined extraction angles.")
+    return fitted[active],active,shifts[active]
 
 
 def load_mc_stack(prep,rows,pixel,*,ensure_native=False):
@@ -255,13 +257,16 @@ def run(config):
             particles=[particles[i] for i in indices];xyz=xyz[indices]
         xyz,shape,export_transform=alignment_pick_grid(xyz,shape,voxel,coarse_size,
             coarse_pixel,member['export_transform'])
+        from ..alignment_geometry import resolve as resolve_geometry,scalar_or_array
+        with np.load(member['final_state'],allow_pickle=False) as geometry_state:
+            fitted_axes=resolve_geometry(geometry_state,all_angles,orientation['rotation_deg'])[1][active]
         centres,R=raw_particle_geometry(xyz,shape,export_transform,angles,cumulative,
-            frozen,orientation['rotation_deg'],orientation.get('flip_y',False),coarse_size)
+            frozen,scalar_or_array(fitted_axes),orientation.get('flip_y',False),coarse_size)
         if member.get('rigid_geometry'):
             from ..particle_geometry import refined_raw_particle_geometry
             with np.load(member['rigid_geometry'],allow_pickle=False) as saved:
                 centres,R=refined_raw_particle_geometry(xyz,export_transform,centres,R,
-                    saved,angles,[int(r['mdoc_index']) for r in rows],coarse_pixel,
+                    saved,all_angles[active],[int(r['mdoc_index']) for r in rows],coarse_pixel,
                     coarse_size,orientation.get('flip_y',False))
         save_json(storage_path(output, 'progress.json'),dict(processed=processed,total=total,used_particles=sum(used),
             observations=observations,tomogram=member['name'],phase='loading raw MC tilts'))

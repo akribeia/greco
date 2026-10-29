@@ -33,7 +33,7 @@ nvidia-nvjitlink-cu12==12.8.93
 nvidia-nvshmem-cu12==3.4.5
 nvidia-nvtx-cu12==12.8.90
 packaging==26.3
-pillow==12.3.0
+pillow==13.0.0
 scikit-image==0.26.0
 scipy==1.17.1
 setuptools==78.1.0

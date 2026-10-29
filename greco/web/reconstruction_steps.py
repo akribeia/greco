@@ -1,5 +1,5 @@
 """Persistent linear refinement/curation steps beneath Reconstruction."""
-from greco.project_layout import join as storage_path, preprocessing_work, series_directory, series_row, owned as layout_owned
+from greco.project_layout import join as storage_path, preprocessing_work, series_row, owned as layout_owned
 
 import json,uuid,re
 from pathlib import Path
@@ -35,7 +35,8 @@ def job_for(row,step):
     return row.get('geometry_refinement',{}) if step['id']=='geometry' else step.get('job',{})
 
 def work_for(root, sid, step):
-    return storage_path(storage_path(storage_path(series_directory(root, series_row(root, sid)), 'reconstruction'), 'refinement'), f"{step['number']:03d}")
+    from greco.project_layout import work_path
+    return storage_path(work_path(root,series_row(root,sid),'reconstruction'),'refinement',f"{step['number']:03d}")
 
 def previous_geometry(row,step):
     items=row['processing_steps'];index=items.index(step)
@@ -46,10 +47,16 @@ def curation_source(row,step):
     prior=previous_geometry(row,step)
     return 'reconstruction' if prior is None else 'curation_step_'+prior['id'] if prior['kind']=='manual_curation' else 'geometry' if prior['id']=='geometry' else 'geometry_step_'+prior['id']
 
-def create(service,pid,sid,kind):
+def create(service,pid,sid,kind,*,reconstruction_id=None):
     if kind not in KINDS:raise InputError('Unknown pipeline step type.')
     with service.lock:
         root=service._root(pid);data=service._read(root)
+        if reconstruction_id is not None and reconstruction_id!=data.get('active_reconstruction_assembly'):
+            raise InputError('Reconstruction changed; reopen its card before adding a step.')
+        from .reconstruction_assemblies import current
+        record=current(data)
+        if record and record['mode']!='standard':
+            raise InputError('Geometry refinement and manual curation are available only in Simple reconstruction.')
         row=next((r for r in data['series'] if r['id']==sid),None)
         if row is None:raise InputError('Unknown tilt series.')
         ensure(row);row['last_refinement_number']+=1

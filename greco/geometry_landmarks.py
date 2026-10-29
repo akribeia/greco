@@ -25,7 +25,10 @@ def seed_after_manual(data,out):
     rows=read_table(data['inputs']['frozen_shifts']);mdoc=np.array([int(r['mdoc_index']) for r in rows])
     order,fit_order,_=accepted_view_order(mdoc,active)
     axis=float(data['orientation']['rotation_deg']);flip=bool(data['orientation'].get('flip_y',False))
-    nominal=initial_cameras(angles,axis)
+    from .alignment_geometry import resolve,scalar_or_array
+    with np.load(storage_path(Path(data['coarse_run']),'final_state.npz'),allow_pickle=False) as source_geometry:
+        fitted_angles,fitted_axes=resolve(source_geometry,angles,axis)
+    nominal=initial_cameras(fitted_angles,scalar_or_array(fitted_axes))
     if (not np.array_equal(saved['angles_deg'],angles) or not np.array_equal(saved['source_positions_zyx'],positions)
         or not np.array_equal(saved['acquisition_order'],order) or not np.allclose(saved['original_cameras_xyz'],nominal)
         or bool(saved['raster_flip_y'])!=flip):raise ValueError('Manual checkpoint does not match the source landmark basis.')

@@ -93,8 +93,13 @@ def run(data):
     if len(set(int(r['mdoc_index']) for r in rows))!=len(rows):raise ValueError('Ambiguous acquisition identity.')
     frozen=np.array([[float(r['dx_raw']),float(r['dy_raw'])] for r in rows])/8
     if flip:frozen[:,1]*=-1
-    cameras=initial_cameras(angles,axis);rz=initial_cameras([0.],axis)[0]
-    translations=-shifts[:,::-1]@rz[:2,:2].T-frozen
+    from ..alignment_geometry import camera_components
+    with np.load(storage_path(Path(data['coarse_run']),'final_state.npz'),allow_pickle=False) as source_geometry:
+        cameras,translations=camera_components(source_geometry,angles,axis,shifts,frozen[:,::-1])
+        from ..alignment_geometry import resolve
+        fitted_angles,display_axes=resolve(source_geometry,angles,axis)
+        if data.get('resume_geometry'):display_axes=np.full(len(angles),axis)
+    rz=initial_cameras([0.],axis)[0]
     base_xyz=positions[:,::-1]-center;ids=np.arange(len(positions))
     geometry=dict(protocol='greco-landmark-rigid-v1',cameras_xyz=cameras,translations_xy_A=translations*pixel,
         positions_xyz_A=base_xyz*pixel,landmark_ids=ids,valid_views=valid,angles_deg=angles,
@@ -127,9 +132,9 @@ def run(data):
     gaussian=validate_gaussian_search(options.get('gaussian_search_prior',False),options.get('gaussian_sigma_px',8.))
     sigma=gaussian['gaussian_sigma_px']
     # Apply every prior before measuring image guidance. None enters the reference model.
-    for edit in edits:translations[edit['index']]+=display_prior_to_detector(edit['shift_yx'],axis,pixel)/pixel
+    for edit in edits:translations[edit['index']]+=display_prior_to_detector(edit['shift_yx'],float(display_axes[edit['index']]),pixel)/pixel
     stack=cp.asarray(raw);del raw
-    kernels=Kernels(cp);weights=angle_weights(angles);weights[list(targets|excluded)]=0
+    kernels=Kernels(cp);weights=angle_weights(fitted_angles);weights[list(targets|excluded)]=0
     fixed=np.array([t for t in active if t not in targets])
     filtered=ramp_filter(stack,cameras,cp)
     from ..tomogram_thickness import stage_bounds

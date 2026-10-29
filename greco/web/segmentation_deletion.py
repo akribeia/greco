@@ -9,6 +9,7 @@ from greco.project_layout import config_paths, record_directory
 from .particle_jobs import config_uses_work
 from .pick_assemblies import _live_job_owner_state
 from .preprocessing import command_result
+from .metadata_cache import read_json
 from .projects import InputError
 from .queue import ACTIVE
 from .segmentation import find
@@ -38,7 +39,7 @@ def delete(service, project_id, identifier, confirmed=False):
             if path.is_relative_to(target):
                 continue
             try:
-                config = json.loads(path.read_text())
+                config = read_json(service,path)
             except (OSError, ValueError) as error:
                 raise InputError('Cannot verify job dependencies; deletion blocked.') from error
             if not isinstance(config, dict):

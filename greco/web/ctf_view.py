@@ -118,7 +118,7 @@ def comparison_image(half, ctf):
     return Image.fromarray(composite.astype('uint8'))
 
 
-def ctf_png(service, project_id, series_id, index, mode, rotation_deg=0, flip_y=False, df_hand=None, axis_deg=None):
+def ctf_png(service, project_id, series_id, index, mode, rotation_deg=0, flip_y=False, df_hand=None, axis_deg=None, preview_geometry=False):
     import mrcfile
     from PIL import Image
     from .preprocessing import status
@@ -163,6 +163,9 @@ def ctf_png(service, project_id, series_id, index, mode, rotation_deg=0, flip_y=
         ctf=json.loads((storage_path(folder, 'ctf.json')).read_text())
         geometry=storage_path(folder, 'ctf_geometry.json')
         if geometry.exists():ctf['local_geometry']=json.loads(geometry.read_text())
+        if preview_geometry:
+            if df_hand is None or axis_deg is None:raise InputError('Select a handedness and axis for the CTF preview.')
+            ctf['local_geometry']=dict(tilt_axis_deg=axis_deg,handedness=df_hand)
         with mrcfile.mmap(service.path(job['stack']),mode='r') as handle:
             height,width=handle.data.shape[-2:]
         options=dict(job.get('options',{}))
@@ -175,6 +178,13 @@ def ctf_png(service, project_id, series_id, index, mode, rotation_deg=0, flip_y=
         # Outside the rotated image the scalar field is padded with central
         # defocus (neutral), just as the image receives background padding.
         lo,hi=series_defocus_range(output,records,options,height,width,binning)
+        if preview_geometry:
+            extent_x=(width-1)*binning/2+max(abs(float(r['dx_raw'])) for r in records)
+            extent_y=(height-1)*binning/2+max(abs(float(r['dy_raw'])) for r in records)
+            theta=np.deg2rad(axis_deg)
+            maximum=max(abs(np.tan(np.deg2rad(float(r['angle_deg'])))) for r in records)
+            scale=max(float(ctf['pixel_size_A'])*maximum*(abs(np.cos(theta))*extent_x+abs(np.sin(theta))*extent_y),1.)
+            lo,hi=-scale,scale
         fraction=np.clip((values-float(ctf['defocus_A'])-lo)/(hi-lo),0,1)
         pink=np.array([244,92,176]);blue=np.array([57,132,245]);neutral=np.array([230,230,235])
         signed=2*fraction-1;strength=np.abs(signed)[...,None]

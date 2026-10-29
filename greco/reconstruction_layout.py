@@ -22,7 +22,10 @@ def artifact_relative(work,parts):
     elif re.fullmatch(r'tilt_\d+_landmarks\.npz',p[0]):p=['registration','landmarks',*p]
     elif p[0] in ('progress.json','progress.tmp','command.json'):p=['logs',*p]
     elif p[0] in ('tomogram.mrc','tomogram_bin8.mrc','tomogram_tinycare.mrc'):
-        series=Path(work).parts[Path(work).parts.index('series')+1]
+        from .project_layout import project_root
+        root=project_root(work)
+        relative=Path(work).relative_to(root).parts if root else Path(work).parts
+        series=relative[2].removesuffix('.queued') if relative[0]=='reconstruction' else relative[relative.index('series')+1]
         number=Path(work).parts[Path(work).parts.index('refinement')+1] if 'refinement' in Path(work).parts else '001'
         method='_tinycare' if 'tinycare' in p[0] else ''
         p=['volumes',f'{series}_r{number}{method}_bin{_binning(Path(work))}.mrc',*p[1:]]
@@ -89,6 +92,9 @@ def write_tables(work):
     else:
         columns+=['grecoShiftXPixel','grecoShiftYPixel']
         records=[(i,float(a),i in active,binning,float(d['cumulative_shifts_yx'][i,1]),float(d['cumulative_shifts_yx'][i,0])) for i,a in enumerate(angles)]
+    if not rigid and 'refined_angles_deg' in d:
+        columns+=['grecoRefinedTiltAngleDeg','grecoTiltAxisRotationDeg']
+        records=[(*row,float(d['refined_angles_deg'][i]),float(d['axis_rotation_deg'][i])) for i,row in enumerate(records)]
     with (path.parent/'tilts.star').open('w') as stream:
         write_loop(stream,'general',['grecoFormatName','grecoCoordinateConvention'],[('greco-reconstruction-v1','centered_world_xyz_and_raw_detector_xy_angstrom' if rigid else 'MAIN_aligned_raster_shifts_pixels_at_binning')])
         write_loop(stream,'tilts',columns,records)
@@ -137,18 +143,6 @@ def publish(work,result=None):
         link.symlink_to(os.path.relpath(target,link.parent),target_is_directory=target.is_dir())
 
 
-def identity_path(path):
-    """Keep existing manual drafts valid across a rename, never across data edits."""
-    from .project_layout import project_root
-    root=project_root(path)
-    aliases=root/'.reconstruction-path-aliases.json' if root else None
-    if aliases and aliases.is_file():
-        reverse=json.loads(aliases.read_text())
-        for current,original in sorted(reverse.items(),key=lambda item:len(item[0]),reverse=True):
-            if str(path)==current or str(path).startswith(current+'/'):return original+str(path)[len(current):]
-    return str(path)
-
-
 def publish_raw_display(work,result):
     """Export unweighted MC sums; retain registration observations for diagnostics."""
     import os
@@ -183,11 +177,6 @@ def publish_raw_display(work,result):
         try:os.replace(temporary,target)
         except Exception:registration.rename(target);raise
     finally:temporary.unlink(missing_ok=True)
-    # Draft identities follow the original unchanged registration observations.
-    alias_file=project_root(work)/'.reconstruction-path-aliases.json'
-    aliases=json.loads(alias_file.read_text()) if alias_file.exists() else {}
-    aliases[str(registration)]=identity_path(target)
-    alias_file.write_text(json.dumps(aliases,indent=2))
     result.update(aligned_stack=str(target),registration_stack=str(registration),aligned_stack_source='motion_corrected_unweighted')
     report=work/'result.json'
     if report.is_file():report.write_text(json.dumps(result,indent=2))

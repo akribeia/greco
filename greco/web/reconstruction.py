@@ -15,7 +15,7 @@ METHODS=('tinycare',)
 
 def capabilities():
     return dict(optimizer='greco_optimizer',optimizer_name='Greco Optimizer',optimizer_version=1,
-                entry_search_sigma_default_px=8.,integrated_smoothness=True,final_binning=True,rescue_radius_px=16,linear_refinement_steps=True)
+                entry_search_sigma_default_px=8.,integrated_smoothness=True,final_binning=True,rescue_radius_px=16,linear_refinement_steps=True,advanced_reconstruction=True)
 
 
 def main_revision():
@@ -23,7 +23,7 @@ def main_revision():
     return source_identity()['source_sha256']
 
 
-def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',entry_search_sigma_px=8.,*,queue_only=False,only_missing=False,tomogram_thickness_percent=50.,smoothness_strength=None,rescue_tilts=True,final_binning=None):
+def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',entry_search_sigma_px=8.,*,queue_only=False,only_missing=False,tomogram_thickness_percent=50.,smoothness_strength=None,rescue_tilts=True,final_binning=None,advanced_options=None):
     from .queue import dispatch,prepare_work,store_job
     from greco.tomogram_thickness import validate_percent
     try:tomogram_thickness_percent=validate_percent(tomogram_thickness_percent)
@@ -32,11 +32,17 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
         raise InputError('Unknown reconstruction optimizer.')
     if final_binning is not None and (type(final_binning) is not int or final_binning not in (1,2,4,8,16)):
         raise InputError('Final binning must be 1, 2, 4, 8 or 16.')
+    from ..optimizer.advanced_options import resolve
+    try:advanced=resolve(advanced_options)
+    except ValueError as error:raise InputError(str(error)) from None
+    if advanced['advanced_mode']:rescue_tilts=True
     alignment=None
     if smoothness_strength is None:smoothness_strength=0.
     if smoothness_strength is not None:
         from .alignment_options import validate
         alignment=validate(smoothness_strength,rescue_tilts)
+    if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')) and alignment['smoothness_strength']!=0:
+        raise InputError('Smoothness must be zero when refining the tilt axis.')
     from greco.optimizer.entry import validate_sigma
     try:entry_search_sigma_px=validate_sigma(entry_search_sigma_px)
     except (ValueError,TypeError,OverflowError):
@@ -47,10 +53,19 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
         raise InputError('Select distinct tilt series.')
     with service.lock:
         root=service._root(project_id);data=service._read(root)
+        from .reconstruction_assemblies import current
+        record=current(data)
+        if 'reconstruction_assemblies' in data and record is None:raise InputError('Create a reconstruction first.')
+        if record and (record['mode']=='advanced')!=advanced['advanced_mode']:raise InputError('The reconstruction mode is fixed; create another reconstruction to change it.')
         slurm=data.get('slurm',{})
         if not slurm.get('ready'):raise InputError('Save cluster settings first.')
         orientation=data.get('orientation')
         if not orientation:raise InputError('Apply the tilt angle / Flip Y to the entire project before reconstructing.')
+        orientation=dict(orientation)
+        if advanced['advanced_mode']:
+            orientation['df_hand']=advanced['defocus_handedness']
+            if advanced['flip_tomogram_z']:
+                orientation['rotation_deg']=(float(orientation['rotation_deg'])+360.)%360.-180.
         rows={row['id']:row for row in data['series']}
         if any(i not in rows for i in series_ids):raise InputError('Unknown tilt series.')
         from .projects import active_series_ids
@@ -74,6 +89,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
             if (queue_only and queued_prep) or (prep['state'] in ('submitted','running') and prep.get('job_id')):
                 planned=queued_prep or prep
                 binning=planned.get('options',{}).get('output_binning',8)
+                if advanced['advanced_mode'] and binning!=8:raise InputError('Advanced mode requires preprocessing at bin8.')
                 if 4096*planned.get('options',{}).get('eer_upscaling',1)/binning>1024:
                     raise InputError('This output binning would create an oversized cubic tomogram. Preprocess at bin8 or a coarser bin first.')
                 if row.get('found',row.get('expected',7))<7:raise InputError('Greco Optimizer requires at least seven tilt planes.')
@@ -89,6 +105,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
             work=service.path(prep['work'])
             if not layout_owned(root,work):raise InputError('Invalid preprocessing output.')
             binning=prep.get('output_binning',prep.get('options',{}).get('output_binning',8))
+            if advanced['advanced_mode'] and binning!=8:raise InputError('Advanced mode requires preprocessing at bin8.')
             output=storage_path(work, 'output')
             paths=dict(stack=storage_path(output, f'ctf/reliability_bin{binning}.mrcs'),
                        rawtlt=storage_path(output, f'greco_raw_bin{binning}.rawtlt'),
@@ -102,6 +119,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
                     raise InputError('This output binning would create an oversized cubic tomogram. Preprocess at bin8 or a coarser bin first.')
             inputs[identifier]=dict(**{key:str(value) for key,value in paths.items()},binning=binning)
         errors=[];array_entries=[];data['reconstruction_denoisers']=denoisers
+        data['reconstruction_advanced_options']=advanced['selected']
         data['reconstruction_optimizer']=optimizer
         data['reconstruction_entry_sigma_px']=entry_search_sigma_px
         data['reconstruction_thickness_percent']=tomogram_thickness_percent
@@ -111,7 +129,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
             row=rows[identifier];work=prepare_work(service,root,row,'reconstruction',queue_only,allowed_dependencies=('preprocessing',) if identifier in deferred else ())
             work=service.path(str(work))
             options=dict(cpus=data.get('preprocessing_options',{}).get('cpus',4),gpus=1)
-            config=dict(inputs=inputs[identifier],orientation=orientation,output=str(storage_path(work, 'output')),
+            config=dict(advanced_options=advanced,inputs=inputs[identifier],orientation=orientation,output=str(storage_path(work, 'output')),
                         tomogram_thickness_percent=tomogram_thickness_percent,final_binning=final_binning,
                         preprocessing_dependency=identifier in deferred,
                         final_reconstruction_protocol='native-wiener-sz-no-reliability-canonical-z-v1',
@@ -125,7 +143,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
                 config['alignment_options']=alignment
             path=storage_path(work, 'config.json');path.write_text(json.dumps(config,indent=2))
             (storage_path(work, 'job.sbatch')).write_text(render_script(slurm['template'],work,path,options,'greco.web.reconstruction_worker'))
-            job=dict(state='submitted',work=str(work),host=slurm.get('submission_host',''),main_revision=revision,orientation=orientation,denoisers=denoisers,optimizer=optimizer,
+            job=dict(advanced_options=advanced,state='submitted',work=str(work),host=slurm.get('submission_host',''),main_revision=revision,orientation=orientation,denoisers=denoisers,optimizer=optimizer,
                      tomogram_thickness_percent=tomogram_thickness_percent,final_binning=final_binning,
                      optimizer_version=1,
                      entry_search_sigma_px=entry_search_sigma_px)
@@ -155,7 +173,7 @@ def landmark_preview(service,root,job):
     checkpoint=work/'alignment/state.npz'
     if not layout_owned(root,checkpoint.resolve()) or not checkpoint.is_file():return None
     def read_angles(path):
-        with np.load(path,allow_pickle=False) as state:return state['angles_deg'].tolist()
+        with np.load(path,allow_pickle=False) as state:return state.get('refined_angles_deg',state['angles_deg']).tolist()
     def read_shape(path):
         with mrcfile.open(path,header_only=True) as handle:
             return [int(handle.header.nz),int(handle.header.ny),int(handle.header.nx)]
@@ -165,6 +183,8 @@ def landmark_preview(service,root,job):
     except (OSError,ValueError,KeyError):return None
     if angles.ndim!=1 or not np.isfinite(angles).all():return None
     candidates=[]
+    fine=work/'registration/fine_scale'
+    if fine.is_dir():candidates.append((2,0,fine))
     for directory in (work/'registration').glob('*'):
         match=re.fullmatch(r'(extra_round|stage)_(\d+)',directory.name)
         if match:candidates.append((match[1]=='extra_round',int(match[2]),directory))
@@ -186,6 +206,84 @@ def landmark_preview(service,root,job):
     return None
 
 
+def refined_angle_table(service, root, job):
+    """Read source-indexed fitted angles from this reconstruction's checkpoint."""
+    import numpy as np
+    if not job.get('work'):return []
+    work=Path(job['work'])
+    if not layout_owned(root,work):return []
+    paths=[storage_path(work,'alignment/final_state.npz'),work/'alignment/final_state.npz']
+    path=next((p for p in paths if p.is_file()),None)
+    if path is None:return []
+    def read(path):
+        with np.load(path,allow_pickle=False) as state:
+            if 'refined_angles_deg' not in state or 'axis_rotation_deg' not in state:return []
+            nominal=np.asarray(state['angles_deg'],float)
+            refined=np.asarray(state['refined_angles_deg'],float)
+            axes=np.asarray(state['axis_rotation_deg'],float)
+            if axes.ndim==0:axes=np.full(nominal.shape,float(axes))
+            if nominal.ndim!=1 or nominal.shape!=refined.shape or nominal.shape!=axes.shape:return []
+            if not all(np.isfinite(a).all() for a in (nominal,refined,axes)):return []
+            active=set(np.asarray(state['active_indices'],int).tolist())
+            return [dict(tilt=int(i)+1,alpha_nominal=float(nominal[i]),alpha_refined=float(refined[i]),beta_refined=float(axes[i]),included=i in active) for i in np.argsort(nominal)]
+    try:
+        from .metadata_cache import MetadataCache
+        cache=getattr(service,'refined_angle_cache',None)
+        if cache is None:
+            cache=MetadataCache(limit=64)
+            service.refined_angle_cache=cache
+        return cache.read(path,read)
+    except (OSError,ValueError,KeyError):return []
+
+
+
+def refined_tilt_preview(root,job):
+    import numpy as np
+    work=Path(job.get('work',''))
+    if not job.get('work') or not layout_owned(root,work):return None
+    stack=storage_path(work,'alignment/aligned_bin8.mrcs')
+    checkpoint=storage_path(work,'alignment/final_state.npz')
+    if not stack.is_file() or not checkpoint.is_file():return None
+    with np.load(checkpoint,allow_pickle=False) as state:
+        active=np.asarray(state['active_indices'],int)
+        angles=np.asarray(state.get('refined_angles_deg',state['angles_deg']),float)[active]
+        order=np.argsort(angles)
+        return dict(angles=angles[order].tolist(),planes=order.tolist(),
+                    source_indices=active[order].tolist(),revision=checkpoint.stat().st_mtime_ns,
+                    final_ctf=storage_path(work/'alignment','ctf_refinement.json').is_file())
+
+
+def refined_tilt_png(service,project_id,series_id,index,mode=None):
+    root=service._root(project_id)
+    data=service._read(root)
+    row=next((r for r in data['series'] if r['id']==series_id),None)
+    if row is None:raise InputError('Unknown tilt series.')
+    job=row.get('reconstruction',{})
+    preview=refined_tilt_preview(root,job)
+    if preview is None:raise InputError('Refined tilt series is not available yet.')
+    if not 0<=index<len(preview['planes']):raise InputError('Tilt index out of range.')
+    work=Path(job['work']);stack=storage_path(work,'alignment/aligned_bin8.mrcs')
+    image=_refined_tilt_image(service,stack,index,preview)
+    if mode:
+        from .reconstruction_ctf import render
+        return render(work,preview['source_indices'][index],mode,image)
+    return image
+
+
+def _refined_tilt_image(service,stack,index,preview):
+    import numpy as np
+    from PIL import Image
+    from .curation_display import display_plane
+    plane=display_plane(service,{'stack':str(stack)},preview['planes'][index],source_index=preview['source_indices'][index])
+    if plane is None:raise InputError('Refined display geometry is unavailable.')
+    values=plane[np.isfinite(plane)]
+    if not values.size:raise InputError('No finite pixels in refined tilt.')
+    lo,hi=np.percentile(values,[1,99])
+    pixels=np.clip((np.nan_to_num(plane,nan=lo)-lo)/max(float(hi-lo),1e-12),0,1)
+    stream=io.BytesIO();Image.fromarray((pixels*255).astype('uint8')).save(stream,format='PNG')
+    return stream.getvalue()
+
+
 def status(service,project_id,series_id):
     with service.lock:
         root=service._root(project_id);data=service._read(root)
@@ -204,8 +302,6 @@ def status(service,project_id,series_id):
         if geo.get('state')=='completed' and geo.get('tomogram') and geo.get('source_reconstruction'):
             expected=storage_path(Path(job.get('work','')), 'alignment')
             sources={expected.resolve()}
-            preserved=Path(job.get('work',''))/'alignment/source_alignment/alignment'
-            if preserved.is_dir():sources.add(preserved.resolve())
             if Path(geo['source_reconstruction']).resolve() in sources:
                 path=service.path(geo['tomogram'])
                 if path==storage_path(service.path(geo['work']), 'output/tomogram_bin8.mrc'):
@@ -217,6 +313,8 @@ def status(service,project_id,series_id):
                             job['volumes']['geometry_'+method]=str(service.path(candidate))
                             job['volume_shapes']['geometry_'+method]=geo['preview_shape']
         job['landmarks']=landmark_preview(service,root,job)
+        job['refined_angles']=refined_angle_table(service,root,job)
+        job['tilt_series']=refined_tilt_preview(root,job)
         return job
 
 

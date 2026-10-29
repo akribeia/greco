@@ -1,5 +1,5 @@
 """Independent persistent segmentation workspaces; source jobs are immutable."""
-from greco.project_layout import preprocessing_work, join as storage_path, record_directory, series_row, series_directory, owned as layout_owned
+from greco.project_layout import preprocessing_work, join as storage_path, record_directory, series_row, series_name, owned as layout_owned
 from greco.preprocessing_star import read_table
 from .. import runtime
 import json,re,uuid
@@ -37,8 +37,8 @@ def next_number(member):
     return 1+max((s['number'] for s in [*member['steps'],*member.get('cleared_steps',[])]),default=0)
 
 def work_directory(root,record,member,kind):
-    series=series_directory(root,series_row(root,member['series_id'])).name
-    base=record_directory(root,record,'segmentation')/'series'/series
+    series=series_name(series_row(root,member['series_id']))
+    base=record_directory(root,record,'segmentation')/series
     layer_number=None
     if kind=='insert_particle':
         layer_number=1+max((s.get('layer_number',0) for s in [*member['steps'],*member.get('cleared_steps',[])] if s['kind']=='insert_particle'),default=0)
@@ -67,8 +67,28 @@ def clear_step(service,pid,identifier,sid,number,confirmed=False):
         service._write(root,data)
         return service._view(pid)
 
+def reconstruction_rows(data,identifier):
+    from .reconstruction_assemblies import capture,source_row
+    capture(data)
+    record=next((r for r in data.get('reconstruction_assemblies',[]) if r['id']==identifier),None)
+    if record is None:raise InputError('Select a reconstruction for this segmentation.')
+    return {row['id']:source_row(data,row,identifier) for row in data['series']}
+
+
+def ensure_reconstruction_links(root,data):
+    """Identify existing immutable sources without changing their files or geometry."""
+    changed=False
+    for segmentation in data.get('segmentations',[]):
+        if segmentation.get('reconstruction_assembly_id'):continue
+        sources=[Path(m['source_work']) for m in segmentation.get('tomograms',[]) if m.get('source_work')]
+        matches=[r for r in data.get('reconstruction_assemblies',[]) if sources and all(p.is_relative_to(record_directory(root,r,'reconstruction')) for p in sources)]
+        if len(matches)==1:
+            segmentation['reconstruction_assembly_id']=matches[0]['id'];changed=True
+    return changed
+
+
 def create(service, pid, raw):
-    if not isinstance(raw, dict) or set(raw) - {'name', 'series_ids', 'binning'}:
+    if not isinstance(raw, dict) or set(raw) - {'name', 'series_ids', 'binning', 'reconstruction_assembly_id'}:
         raise InputError('Unknown segmentation options.')
     name = raw.get('name', '')
     ids = raw.get('series_ids', [])
@@ -82,13 +102,15 @@ def create(service, pid, raw):
     with service.lock:
         root = service._root(pid)
         data = service._read(root)
-        ids = active_series_ids({r['id']: r for r in data['series']}, ids)
+        reconstruction_id=raw.get('reconstruction_assembly_id')
+        source_rows=reconstruction_rows(data,reconstruction_id)
+        ids = active_series_ids(source_rows, ids)
         if not data.get('slurm', {}).get('ready'):
             raise InputError('Configure cluster Settings first.')
         members = []
         from .picking_source import source_job, volume_context
         for sid in ids:
-            row = next((r for r in data['series'] if r['id'] == sid), None)
+            row = source_rows.get(sid)
             if row is None:
                 raise InputError('Unknown tilt series.')
             job = refresh(service, {'preprocessing': source_job(row)})
@@ -102,7 +124,7 @@ def create(service, pid, raw):
         identifier = uuid.uuid4().hex[:8]
         while any(a['id'] == identifier for a in data.get('segmentations', [])):
             identifier = uuid.uuid4().hex[:8]
-        record = dict(id=identifier, name=name.strip(), binning=binning, tomograms=members)
+        record = dict(id=identifier, name=name.strip(), binning=binning, tomograms=members,reconstruction_assembly_id=reconstruction_id)
         base = record_directory(root, record, 'segmentation').name
         suffix = 2
         used = {record_directory(root, a, 'segmentation') for a in data.get('segmentations', [])}
@@ -158,6 +180,7 @@ def reset_workspace(service,root,data,work):
 
 
 def _submit(service, root, data, record, member, kind, options):
+    data.update(layout_version=3,segmentation_layout_version=2)
     if record.get('delete_requested_jobs'):
         raise InputError('This segmentation is being deleted. Wait for deletion to finish.')
     if kind!='insert_particle' and any(s['kind']==kind and s.get('work') for s in member['steps']):

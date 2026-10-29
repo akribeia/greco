@@ -43,12 +43,14 @@ def source_job(row):
     return row.get(kind,{})
 
 
-def set_source(service,pid,sid,kind,*,step_id=None):
+def set_source(service,pid,sid,kind,*,step_id=None,reconstruction_id=None):
     if kind is None:raise InputError('Select another output instead of clearing the picking source.')
     if kind not in KINDS:raise InputError('Invalid picking source.')
     if step_id and kind not in ('geometry_refinement','manual_curation'):raise InputError('Only pipeline steps accept a step identity.')
     with service.lock:
         root=service._root(pid);data=service._read(root)
+        if reconstruction_id is not None and reconstruction_id!=data.get('active_reconstruction_assembly'):
+            raise InputError('Reconstruction changed; reopen its card before selecting a source.')
         row=next((r for r in data['series'] if r['id']==sid),None)
         if row is None:raise InputError('Unknown tilt series.')
         if kind is not None:

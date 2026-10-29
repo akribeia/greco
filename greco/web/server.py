@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import mimetypes
 import secrets
@@ -16,15 +17,25 @@ STATIC = Path(__file__).with_name("static")
 
 def make_handler(service, session_token):
     class Handler(BaseHTTPRequestHandler):
-        def send(self, status, body, content_type="application/json"):
+        def send(self, status, body, content_type="application/json", *, cache_control="no-store", etag=None):
             if isinstance(body, (dict, list)):
                 body = json.dumps(body, allow_nan=False).encode()
             elif isinstance(body, str):
                 body = body.encode()
+            compressed = False
+            if len(body) >= 4096 and content_type.startswith(("application/json", "text/", "application/javascript")):
+                encodings = [item.strip() for item in self.headers.get("Accept-Encoding", "").split(",")]
+                if "gzip" in encodings:
+                    body = gzip.compress(body, compresslevel=1)
+                    compressed = True
             self.send_response(status)
+            self.send_header("Vary", "Accept-Encoding")
+            if compressed:
+                self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache_control)
+            if etag is not None:self.send_header("ETag",etag)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'")
             if content_type.startswith("text/html"):
@@ -130,6 +141,15 @@ def make_handler(service, session_token):
                     elif parsed.path == '/api/ctf-redo-status':
                         from .ctf_redo import status
                         self.send(200,status(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0]))
+                    elif parsed.path == '/api/reconstruction-landmark-densities':
+                        from .landmark_density import densities
+                        self.send(200,densities(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],query.get('assembly_id',[None])[0]))
+                    elif parsed.path == '/api/reconstruction-landmarks':
+                        from .landmark_cloud import cloud
+                        self.send(200,cloud(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],query.get('assembly_id',[None])[0]))
+                    elif parsed.path == '/api/reconstruction-tilt-plane':
+                        from .reconstruction import refined_tilt_png
+                        self.send(200,refined_tilt_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('mode',[None])[0]),'image/png')
                     elif parsed.path == '/api/reconstruction-status':
                         from .reconstruction import status
                         self.send(200,status(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0]))
@@ -168,10 +188,10 @@ def make_handler(service, session_token):
                         self.send(200,plane_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('source',['reconstruction'])[0],discarded=query.get('discarded',['0'])[0]=='1'),'image/png')
                     elif parsed.path == '/api/ctf-plane':
                         from .ctf_view import ctf_png
-                        self.send(200,ctf_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('mode',['rings'])[0],rotation_deg=query.get('rotation_deg',['0'])[0],flip_y=query.get('flip_y',['0'])[0]=='1',df_hand=query.get('df_hand',[None])[0],axis_deg=query.get('axis_deg',[None])[0]),'image/png')
+                        self.send(200,ctf_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('mode',['rings'])[0],rotation_deg=query.get('rotation_deg',['0'])[0],flip_y=query.get('flip_y',['0'])[0]=='1',df_hand=query.get('df_hand',[None])[0],axis_deg=query.get('axis_deg',[None])[0],preview_geometry=query.get('preview_geometry',['0'])[0]=='1'),'image/png')
                     elif parsed.path == '/api/tilt-plane':
                         from .preprocessing import plane_png
-                        self.send(200,plane_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('rotation_deg',[None])[0],flip_y=query.get('flip_y',['0'])[0]=='1',landscape=query.get('landscape',['0'])[0]=='1',df_hand=query.get('df_hand',[None])[0],axis_deg=query.get('axis_deg',[None])[0]),'image/png')
+                        self.send(200,plane_png(service,query.get('project_id',[''])[0],query.get('series_id',[''])[0],int(query.get('index',['0'])[0]),query.get('rotation_deg',[None])[0],flip_y=query.get('flip_y',['0'])[0]=='1',landscape=query.get('landscape',['0'])[0]=='1',df_hand=query.get('df_hand',[None])[0],axis_deg=query.get('axis_deg',[None])[0],preview_geometry=query.get('preview_geometry',['0'])[0]=='1'),'image/png')
                     else:
                         self.send(404, dict(error="Unknown route."))
                     return
@@ -181,11 +201,21 @@ def make_handler(service, session_token):
                     return
                 file = STATIC / assets[parsed.path]
                 mime = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+                etag=None
+                if parsed.path!='/':
+                    stamp=file.stat();etag=f'"{stamp.st_mtime_ns:x}-{stamp.st_size:x}"'
+                    if self.headers.get('If-None-Match')==etag:
+                        self.send_response(304)
+                        self.send_header('ETag',etag)
+                        self.send_header('Cache-Control','private, max-age=0, must-revalidate')
+                        self.end_headers()
+                        return
                 payload=file.read_bytes()
                 if parsed.path=='/':
                     from .. import __version__
                     payload=payload.replace(b'__GRECO_VERSION__',__version__.encode())
-                self.send(200, payload, mime + "; charset=utf-8")
+                self.send(200, payload, mime + "; charset=utf-8",etag=etag,
+                          cache_control='private, max-age=0, must-revalidate' if etag else 'no-store')
             except (InputError, OSError, ValueError) as error:
                 self.send(400, dict(error=str(error)))
 
@@ -217,9 +247,18 @@ def make_handler(service, session_token):
                 elif route == "/api/picker-template-select":
                     from .picking import select_template
                     result = select_template(service,data['project_id'],data['path'],assembly_id=data.get('assembly_id'))
+                elif route == '/api/reconstruction-assemblies':
+                    from .reconstruction_assemblies import create
+                    result=create(service,data['project_id'],data.get('name'),data.get('mode'))
+                elif route == '/api/reconstruction-assembly-delete':
+                    from .reconstruction_assemblies import delete
+                    result=delete(service,data['project_id'],data['assembly_id'],data.get('confirmed',False))
+                elif route == '/api/select-reconstruction-assembly':
+                    from .reconstruction_assemblies import select
+                    result=select(service,data['project_id'],data['assembly_id'])
                 elif route == '/api/pick-assemblies':
                     from .pick_assemblies import create
-                    result=create(service,data['project_id'],data.get('name'))
+                    result=create(service,data['project_id'],data.get('name'),data.get('reconstruction_id'))
                 elif route == '/api/select-pick-assembly':
                     from .pick_assemblies import select
                     result=select(service,data['project_id'],data['assembly_id'])
@@ -296,10 +335,10 @@ def make_handler(service, session_token):
                     result=service.set_series_enabled_many(data['project_id'],data.get('series_ids',[data.get('series_id')]),data['enabled'])
                 elif route == '/api/picking-source':
                     from .picking_source import set_source
-                    result=set_source(service,data['project_id'],data['series_id'],data.get('source'),step_id=data.get('step_id'))
+                    result=set_source(service,data['project_id'],data['series_id'],data.get('source'),step_id=data.get('step_id'),reconstruction_id=data.get('reconstruction_id'))
                 elif route == '/api/reconstruction-step-create':
                     from .reconstruction_steps import create
-                    result=create(service,data['project_id'],data['series_id'],data['kind'])
+                    result=create(service,data['project_id'],data['series_id'],data['kind'],reconstruction_id=data.get('reconstruction_id'))
                 elif route == '/api/reconstruction-step-delete':
                     from .reconstruction_steps import delete
                     result=delete(service,data['project_id'],data['series_id'],data['step_id'],data.get('confirmed',False))
@@ -331,7 +370,7 @@ def make_handler(service, session_token):
                 elif route in ('/api/submit-reconstruction','/api/queue-reconstruction'):
                     from .reconstruction import submit
                     mode=data.get('optimizer','greco_optimizer')
-                    result=submit(service,data['project_id'],data['series_ids'],data.get('denoisers',[]),mode,data.get('entry_search_sigma_px',8.),queue_only=route.startswith('/api/queue-') or data.get('queue_only',False),only_missing=data.get('submit_all',False),tomogram_thickness_percent=data.get('tomogram_thickness_percent',50.),smoothness_strength=data.get('smoothness_strength',0.),rescue_tilts=data.get('rescue_tilts',True),final_binning=data.get('final_binning'))
+                    result=submit(service,data['project_id'],data['series_ids'],data.get('denoisers',[]),mode,data.get('entry_search_sigma_px',8.),queue_only=route.startswith('/api/queue-') or data.get('queue_only',False),only_missing=data.get('submit_all',False),tomogram_thickness_percent=data.get('tomogram_thickness_percent',50.),smoothness_strength=data.get('smoothness_strength',0.),rescue_tilts=data.get('rescue_tilts',True),final_binning=data.get('final_binning'),advanced_options=data.get('advanced_options'))
                 elif route in ('/api/submit-refinement','/api/queue-refinement'):
                     from .refinement import submit
                     result=submit(service,data['project_id'],data['series_ids'],data.get('options',{}),queue_only=route.startswith('/api/queue-') or data.get('queue_only',False),only_missing=data.get('submit_all',False))

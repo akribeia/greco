@@ -133,12 +133,19 @@ def resolve_raster_axis(folders, initial, *, axis_deg, **params):
 
 def refine_local_series(folders, initial, *, pixel_A, voltage_kV, cs_mm,
                         amp_contrast, axis_deg, tile_size=512, gpu=True,
-                        res_low_A=None,res_high_A=None,forced_hand=None,write_outputs=True):
+                        res_low_A=None,res_high_A=None,forced_hand=None,write_outputs=True,axes_deg=None):
     if not folders or len(folders)!=len(initial):
         raise ValueError('Local CTF inputs/results must match.')
-    axis_deg,raster_mapping=resolve_raster_axis(folders,initial,axis_deg=axis_deg,
-        pixel_A=pixel_A,voltage_kV=voltage_kV,cs_mm=cs_mm,amp_contrast=amp_contrast,
-        tile_size=tile_size,gpu=gpu,res_low_A=res_low_A,res_high_A=res_high_A)
+    if axes_deg is None:
+        axis_deg,raster_mapping=resolve_raster_axis(folders,initial,axis_deg=axis_deg,
+            pixel_A=pixel_A,voltage_kV=voltage_kV,cs_mm=cs_mm,amp_contrast=amp_contrast,
+            tile_size=tile_size,gpu=gpu,res_low_A=res_low_A,res_high_A=res_high_A)
+        axes=np.full(len(initial),axis_deg)
+    else:
+        axes=np.asarray(axes_deg,float)
+        if axes.shape!=(len(initial),) or not np.isfinite(axes).all():
+            raise ValueError('Final CTF axes must match the supplied views.')
+        raster_mapping=dict(source='final_alignment_geometry',offset_deg=0.)
     print(f'Local CTF raster axis: {axis_deg:.3f} deg ({raster_mapping})',flush=True)
     est=_CTFEstimator(pixel_A=pixel_A,voltage_kV=voltage_kV,cs_mm=cs_mm,
                       amp_contrast=amp_contrast,tile_size=tile_size,gpu=gpu,
@@ -162,7 +169,7 @@ def refine_local_series(folders, initial, *, pixel_A, voltage_kV, cs_mm,
         result=list(reference);spectra={}
         for i in indices:
             ref=reference[i]
-            geometry=TiltDefocusGeometry(ref.tilt_deg,axis_deg,pixel_A,hand,alpha,beta)
+            geometry=TiltDefocusGeometry(ref.tilt_deg,float(axes[i]),pixel_A,hand,alpha,beta)
             tiles=np.load(storage_path(folders[i], 'ctf_tiles.npy'),mmap_mode='r',allow_pickle=False)
             centers,stds=metadata[i]
             raw=scaled_average(tiles,centers,stds,ref.df_mean_A,geometry,xp,cache)
@@ -206,8 +213,9 @@ def refine_local_series(folders, initial, *, pixel_A, voltage_kV, cs_mm,
                alpha_offset_deg=float(alpha),beta_offset_deg=float(beta),
                defocus_convention=DEFOCUS_CONVENTION,
                source='tile_spectrum_refinement',diagnostics=diagnostic)
+    if axes_deg is not None:model['tilt_axes_deg']=axes.tolist()
     if write_outputs:
         for i,folder in enumerate(folders):
             np.save(storage_path(folder, 'ctf_spectrum.npy'),spectra[i])
-            (storage_path(folder, 'ctf_geometry.json')).write_text(json.dumps(dict(model,tilt_deg=results[i].tilt_deg,pixel_size_A=pixel_A),indent=2))
+            (storage_path(folder, 'ctf_geometry.json')).write_text(json.dumps(dict(model,tilt_axis_deg=float(axes[i]),tilt_deg=results[i].tilt_deg,pixel_size_A=pixel_A),indent=2))
     return results,model

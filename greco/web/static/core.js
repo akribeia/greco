@@ -30,13 +30,42 @@ const fields = [
   ["cs_mm", "Spherical aberration · Cs", "mm", true], ["amplitude_contrast", "Amplitude contrast", "fraction · 0–1", true],
   ["tilt_axis_deg", "Tilt axis", "° · required; unmodified TiltAxisAngle from the mdoc", true]
 ];
-async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
-  let data;
-  try { data = await response.json(); } catch { throw new Error("Invalid server response."); }
-    if (!response.ok) throw new Error(response.status===404 && (path.startsWith('/api/queue-') || path==='/api/submit-all-queued' || path==='/api/clean-queued' || path==='/api/submit-reconstruction' || path.startsWith('/api/reconstruction-status') || path==='/api/orientation' || path==='/api/slurm-settings' || path==='/api/submit-preprocessing' || path.startsWith('/api/preprocessing-status')) ? 'The running server does not have the latest processing routes yet. Restart the Greco web server, then reload this page. Your edits remain in the form.' : data.error || "The operation could not be completed.");
-  return data;
+const grecoWaitingRequests=new Set();
+let grecoWaitingDialog=null;
+function beginGrecoWaiting(path,body){
+  const count=Array.isArray(body?.series_ids)?body.series_ids.length:0;
+  const title=path.includes('submit') || path.includes('queue')?'Submitting jobs':'Please wait';
+  const message=title==='Submitting jobs'?`Preparing inputs and submitting${count?' '+count+' job'+(count===1?'':'s'):''} to Slurm…`:
+    path.includes('delete')?'Checking dependencies and deleting the selected job…':
+    path==='/api/open'?'Opening project…':'Applying your changes…';
+  const request={title,message,visible:false};grecoWaitingRequests.add(request);
+  const update=()=>{
+    const visible=[...grecoWaitingRequests].find(item=>item.visible);
+    if(!visible){if(grecoWaitingDialog?.open)grecoWaitingDialog.close();return;}
+    if(!grecoWaitingDialog){
+      grecoWaitingDialog=document.createElement('dialog');grecoWaitingDialog.className='greco-waiting-dialog';
+      grecoWaitingDialog.setAttribute('aria-labelledby','greco-waiting-title');
+      grecoWaitingDialog.innerHTML='<span class="greco-waiting-spinner" aria-hidden="true"></span><div role="status" aria-live="polite"><h3 id="greco-waiting-title"></h3><p></p></div>';
+      grecoWaitingDialog.addEventListener('cancel',event=>event.preventDefault());document.body.append(grecoWaitingDialog);
+    }
+    grecoWaitingDialog.querySelector('h3').textContent=visible.title;
+    grecoWaitingDialog.querySelector('p').textContent=visible.message;
+    if(!grecoWaitingDialog.open)grecoWaitingDialog.showModal();
+  };
+  const timer=setTimeout(()=>{request.visible=true;update();},1000);
+  return ()=>{clearTimeout(timer);grecoWaitingRequests.delete(request);update();};
 }
+async function api(path, body) {
+  const finished=body===undefined?()=>{}:beginGrecoWaiting(path,body);
+  try{
+    const response = await fetch(path, body === undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    let data;
+    try { data = await response.json(); } catch { throw new Error("Invalid server response."); }
+    if (!response.ok) throw new Error(response.status===404 && (path.startsWith('/api/queue-') || path==='/api/submit-all-queued' || path==='/api/clean-queued' || path==='/api/submit-reconstruction' || path.startsWith('/api/reconstruction-status') || path==='/api/orientation' || path==='/api/slurm-settings' || path==='/api/submit-preprocessing' || path.startsWith('/api/preprocessing-status')) ? 'The running server does not have the latest processing routes yet. Restart the Greco web server, then reload this page. Your edits remain in the form.' : data.error || "The operation could not be completed.");
+    return data;
+  }finally{finished();}
+}
+
 function notify(message) { $("toast").textContent=message; $("toast").classList.remove("hidden"); clearTimeout(notify.timer); notify.timer=setTimeout(()=>$("toast").classList.add("hidden"),5000); }
 function angle(value) { return Number(value).toFixed(1)+"°"; }
 async function requireCTFCoordinateProtocol() {
@@ -56,16 +85,24 @@ function preprocessingState(job,row) {
     {...job,state:redo.state,ctf_redo_active:true,ctf_redo_job_id:redo.job_id}:job;
 }
 function jobStateLabel(value,queued=false){const label=queued || value==='queued'?'Queued':value || 'Pending';return esc(label.charAt(0).toUpperCase()+label.slice(1));}
+function projectHasActiveJobs(project){
+  const busy=job=>['submitted','running','submitting','unknown'].includes(job?.state);
+  const rowBusy=row=>['preprocessing','reconstruction','refinement','angle_refinement','geometry_refinement','picking','handedness_test','ctf_redo'].some(key=>busy(row[key])) || (row.processing_steps || []).some(step=>busy(step.job));
+  return (project?.series || []).some(rowBusy) ||
+    (project?.reconstruction_assemblies || []).some(record=>record.id!==project.active_reconstruction_assembly && Object.values(record.series || {}).some(rowBusy)) ||
+    (project?.pick_assemblies || []).some(record=>record.id!==project.active_pick_assembly && Object.values(record.series || {}).some(rowBusy));
+}
 async function pollProjectStatus(){
   const id=state.project?.id;
   const pickVersion=state.pickSelectionVersion || 0;
+  const reconstructionId=state.project?.active_reconstruction_assembly;
   if(!id)return;
-  try{const project=await api('/api/project-status?project_id='+encodeURIComponent(id));if(state.project?.id!==id || (state.pickSelectionVersion || 0)!==pickVersion)return;state.project=project;renderStages();if(state.stage==='tilts')renderTilts(project.series);else if(state.stage!=='picking' && project.series.some(row=>['preprocessing','reconstruction','refinement','angle_refinement','geometry_refinement','picking','handedness_test','ctf_redo'].some(kind=>['submitted','running','submitting','unknown'].includes(row[kind]?.state))))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);}
+  try{const project=await api('/api/project-status?project_id='+encodeURIComponent(id));if(state.project?.id!==id || (state.pickSelectionVersion || 0)!==pickVersion || state.project?.active_reconstruction_assembly!==reconstructionId)return;state.project=project;renderStages();if(state.stage==='tilts')renderTilts(project.series);else if(state.stage!=='picking' && projectHasActiveJobs(project))state.projectStatusTimer=setTimeout(pollProjectStatus,5000);}
   catch(error){if(state.project?.id===id)state.projectStatusTimer=setTimeout(pollProjectStatus,8000);}
 }
 function reconstructionStateLabel(job){return ['completed','partial'].includes(job?.state)?`Completed${job.active_count!=null && job.total_tilts!=null?' · '+job.active_count+'/'+job.total_tilts:''}`:jobStateLabel(job?.state);}
 function queuedRefinementLabels(row){return [['geometry_refinement','Geometry']].filter(([key])=>['submitted','running'].includes(row[key]?.state)).map(([key,label])=>`<small class="badge pending">${label} · ${jobStateLabel(row[key].state)}</small>`).join(' ');}
-function jobNeedsSubmission(job){if(['completed','submitting','submitted','running','unknown','queued'].includes(job?.state))return false;return ['failed','cancelled'].includes(job?.state) || (!job?.work && !job?.job_id);}
+function jobNeedsSubmission(job){if(['completed','submitting','submitted','running','unknown','queued'].includes(job?.state))return false;return ['pending','failed','cancelled'].includes(job?.state) || (!job?.work && !job?.job_id);}
 function submittableSeries(kind){return state.project.series.filter(row=>row.enabled!==false && jobNeedsSubmission(row[kind]) && (kind==='preprocessing' || ['completed','submitted','running'].includes(row[kind==='reconstruction'?'preprocessing':'reconstruction']?.state))).map(row=>row.id);}
 
 function bindSliceWheel(area,slider){

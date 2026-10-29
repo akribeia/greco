@@ -12,6 +12,12 @@ def rescale_geometry(positions,shifts,source_size,target_size,axis,flip_y=False)
     from .gcc import raw_affine
     factor=target_size/source_size
     delta=(target_size-1)/2-factor*(source_size-1)/2
+    if np.ndim(axis):
+        angles=np.deg2rad(np.asarray(axis,float));co=np.cos(angles);si=np.sin(angles)
+        raw_offset=np.array([factor-1 if flip_y else 0,0.])
+        v=np.full(2,delta)-raw_offset
+        offsets=np.column_stack((co*v[0]-si*v[1],si*v[0]+co*v[1]))
+        return np.asarray(positions)*factor+delta,np.asarray(shifts)*factor+offsets
     a,b,c,d,_=raw_affine(axis,target_size);rotation=np.array([[a,b],[c,d]])
     raw_offset=np.array([factor-1 if flip_y else 0,0.])
     offset=rotation.T@(np.full(2,delta)-raw_offset)

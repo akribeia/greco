@@ -41,7 +41,7 @@ def detector_support(centres, size, cumulative_shifts_yx=None, frozen_shifts_yx=
         raise ValueError('Greco Optimizer requires cumulative shifts, frozen shifts and axis together')
     cumulative=np.asarray(cumulative_shifts_yx,float);frozen=np.asarray(frozen_shifts_yx,float)
     expected=(centres.shape[1],2)
-    if cumulative.shape!=expected or frozen.shape!=expected or not np.isfinite(cumulative).all() or not np.isfinite(frozen).all() or not np.isfinite(axis_deg):
+    if cumulative.shape!=expected or frozen.shape!=expected or not np.isfinite(cumulative).all() or not np.isfinite(frozen).all() or not np.isfinite(axis_deg).all():
         raise ValueError('invalid local-track raw geometry')
     from ..gcc import raw_sample_bases,raw_search_support
     by,bx=raw_sample_bases(centres,cumulative,frozen,axis_deg,size)

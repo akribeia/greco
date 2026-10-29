@@ -5,6 +5,7 @@ import json
 import re
 import shutil
 from pathlib import Path
+from .metadata_cache import read_json
 from .projects import InputError
 from .queue import _work_path, ACTIVE
 from .pick_assemblies import _live_job_owner_state
@@ -55,7 +56,7 @@ def delete(service, project_id, series_id, work, confirmed=False, *, kind='prepr
                 if not (kind == 'reconstruction' and config_path.is_relative_to(target / 'refinement')):
                     continue
             try:
-                config = json.loads(config_path.read_text())
+                config = read_json(service,config_path)
             except (OSError, ValueError) as error:
                 raise InputError('Cannot verify job dependencies; deletion blocked.') from error
             inputs = {k: v for (k, v) in config.items() if k not in ('series', 'project_snapshot', 'source_result')}

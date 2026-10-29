@@ -150,3 +150,31 @@ def submit_arrays(service, root, data, kind, entries, runner):
             row[kind + '_history'][-1].update(job)
         service._write(root, data)
     return errors
+
+
+def accounting_state(identifier,runner,host='',cache=None):
+    """Read array accounting even when Slurm compresses cancelled task ranges."""
+    import re
+    identifier=str(identifier)
+    if '_' not in identifier:
+        lines=runner(['sacct','-X','-n','-P','-j',identifier,'--format=State'],host).splitlines()
+        return lines[0].split('|')[0].strip().split()[0] if lines else ''
+    parent,task=identifier.split('_',1)
+    if not task.isdigit():return ''
+    key=('accounting',host,parent)
+    if cache is not None and key in cache:lines=cache[key]
+    else:
+        lines=runner(['sacct','-X','-n','-P','-j',parent,'--format=JobID%64,State'],host).splitlines()
+        if cache is not None:cache[key]=lines
+    for line in lines:
+        job,separator,state=line.strip().partition('|')
+        if not separator:continue
+        match=job==identifier
+        if not match and job.startswith(parent+'_[') and job.endswith(']'):
+            for part in job[len(parent)+2:-1].split('%')[0].split(','):
+                interval=re.fullmatch(r'(\d+)(?:-(\d+)(?::(\d+))?)?',part)
+                if interval:
+                    lo=int(interval[1]);hi=int(interval[2] or lo);step=int(interval[3] or 1)
+                    if lo<=int(task)<=hi and (int(task)-lo)%step==0:match=True;break
+        if match:return state.split('|')[0].strip().split()[0] if state.strip() else ''
+    return ''

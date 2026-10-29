@@ -10,7 +10,8 @@ def run(data):
     import cupy as cp,mrcfile
     from .web.refinement_worker import load_state, rebuild_native, clean_json
     from .angular_joint import rescale_geometry
-    from .landmark_rigid import initial_cameras,make_objective,fit_rigid_motion,updated_geometry
+    from .landmark_rigid import make_objective,updated_geometry
+    from .sta.rigid_polishing import fit_rigid_motion
     from .landmark_rigid_gpu import Kernels,ramp_filter,angle_weights
     from .sta.gp3d import correlation_surfaces
     from .helpers import soft_spherical_mask
@@ -24,8 +25,13 @@ def run(data):
     basis=Path(data.get('landmark_basis') or storage_path(Path(data['coarse_run']), 'final_state.npz'))
     angles=np.loadtxt(data['inputs']['rawtlt'],ndmin=1)
     positions,shifts,valid,classes,_,source_bin=load_state(basis,angles,allow_partial=True)
-    with np.load(basis) as checkpoint:
+    with np.load(basis,allow_pickle=False) as checkpoint:
         active=np.asarray(checkpoint['active_indices'],int)
+    with np.load(storage_path(Path(data['coarse_run']),'final_state.npz'),allow_pickle=False) as checkpoint:
+        source_geometry={k:np.array(checkpoint[k]) for k in checkpoint.files}
+    from .alignment_geometry import resolve,scalar_or_array,camera_components
+    fitted_angles,fitted_axes=resolve(source_geometry,angles,data['orientation']['rotation_deg'])
+    fitted_axes=scalar_or_array(fitted_axes)
     if source_bin!=8:raise ValueError('Start from an accepted bin8 reconstruction.')
     sta=data.get('sta_landmarks')
     if sta:
@@ -49,10 +55,9 @@ def run(data):
         if data['orientation'].get('flip_y'):stack=stack[:,::-1,:].copy();frozen[:,0]*=-1
     else:
         config=dict(data,options=dict(options,output_binning=target_bin));stack,frozen,pixel=rebuild_native(config,angles)
-        positions,shifts=rescale_geometry(positions,shifts,source_n,stack.shape[-1],axis,data['orientation'].get('flip_y',False))
+        positions,shifts=rescale_geometry(positions,shifts,source_n,stack.shape[-1],fitted_axes,data['orientation'].get('flip_y',False))
     n=stack.shape[-1];center=(n-1)/2;xyz=positions[:,::-1]-center
-    cameras=initial_cameras(angles,axis);rz=initial_cameras(np.array([0.]),axis)[0]
-    translations=-(shifts[:,::-1]@rz[:2,:2].T)-frozen[:,::-1]
+    cameras,translations=camera_components(source_geometry,angles,axis,shifts,frozen)
     initial_cameras_array=cameras.copy();initial_translations=translations.copy();initial_xyz=xyz.copy()
     if sta and data.get('resume_geometry'):
         # New STA landmarks replace the checkpoint's old cloud. Transfer only
@@ -105,7 +110,7 @@ def run(data):
     mask=cp.asarray(soft_spherical_mask(patch,radius=half-2,edge=3),cp.float32)
     y,x=cp.mgrid[:patch,:patch]-half;window=cp.clip((half-cp.sqrt(x*x+y*y))/3,0,1).astype(cp.float32)
     ky=cp.fft.fftfreq(fft_n)[:,None];kx=cp.fft.rfftfreq(fft_n)[None,:];band=(kx*kx+ky*ky<=.35**2)&(kx*kx+ky*ky>0)
-    weights=np.zeros(len(angles));weights[active]=angle_weights(angles[active]);history=[];stable=0;stop='maximum_passes'
+    weights=np.zeros(len(angles));weights[active]=angle_weights(fitted_angles[active]);history=[];stable=0;stop='maximum_passes'
     support_events=[];support_refits=0
     def spectra(images):
         v=images-(images*window).sum((-2,-1),keepdims=True)/cp.maximum(window.sum(),1)
