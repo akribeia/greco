@@ -131,4 +131,8 @@ class AdvancedRefiner:
         motion=np.hypot(by1-by0,bx1-bx0)
         geometry_change=dict(fixed_world_grid_points=len(grid),median_raw_motion_px=float(np.median(motion)),p90_raw_motion_px=float(np.quantile(motion,.9)),max_raw_motion_px=float(motion.max()),per_view_median_raw_motion_px=np.median(motion,axis=0).tolist(),axis_change_deg=(axis-initial_axis).tolist(),tilt_change_deg=(angles-initial_angles).tolist())
         manifest=dict(protocol=PROTOCOL,rescue_exit_policy='adaptive_4_16_32_confirm_4',rms_reference_policy='current_search_radius_segment',stopping_median_px=med,stopping_p90_px=p90,outer_round_index=kwargs.get('round_index'),outer_round_count=kwargs.get('round_count'),geometry_change=geometry_change,stop_reason=reason,passes=len(history),history=history,last=history[-1] if history else None,runtime_s=time.monotonic()-start,mode=self.mode,backend='gpu_schur_angular',final_axis_rotation_deg=state['axis_rotation_deg'])
+        if reason=='insufficient_supported_landmarks':
+            manifest['support_counts_per_view']=valid.sum(0).tolist()
+        elif reason=='insufficient_measured_observations':
+            manifest['support_counts_per_view']=observed.sum(0).tolist()
         return state,manifest

@@ -337,6 +337,13 @@ def project_status(service, project_id):
         other_picks=list(inactive_rows(data))
         from .reconstruction_assemblies import inactive_jobs
         other_reconstructions=list(inactive_jobs(data))
+        inactive_preprocessing=[]
+        for collection in data.get('preprocessing_assemblies',[]):
+            if collection['id']==data.get('active_preprocessing_assembly'):continue
+            for saved in collection.get('series',{}).values():
+                inactive_preprocessing.append(saved)
+                for key in ('preprocessing','ctf_redo','handedness_test'):
+                    if saved.get(key):other_reconstructions.append((saved,key))
         for owner,key in other_reconstructions:
             job=owner[key]
             if job.get('job_id') and job.get('state') in ('submitted','running','submitting','unknown'):
@@ -387,6 +394,10 @@ def project_status(service, project_id):
                     row['picking']=updated
                     if updated.get('state')=='completed':row['pick_count']=updated.get('pick_count',0)
                     save_proxy(row,saved);changed=True
+        for saved in inactive_preprocessing:
+            if saved.get('ctf_redo'):
+                from .ctf_redo import apply_completed
+                if apply_completed(saved,saved['ctf_redo']):changed=True
         for row in data['series']:
             for step in row.get('processing_steps',[]):
                 if step.get('job',{}).get('state') in ('submitted','running','submitting','unknown'):

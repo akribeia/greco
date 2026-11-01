@@ -40,6 +40,7 @@ def guard_preprocessing_dependencies(data,series_id,*,allow_queued_dependencies=
     if row is None:raise InputError('Unknown tilt series.')
     owners=[]
     for record in data.get('reconstruction_assemblies',[]):
+        if data.get('preprocessing_assemblies') and record.get('preprocessing_assembly_id')!=row.get('preprocessing_assembly_id'):continue
         saved=row if record['id']==data.get('active_reconstruction_assembly') else record.get('series',{}).get(series_id,{})
         existing=saved.get('reconstruction',{}).get('work')
         queued=saved.get('queued_reconstruction') or saved.get('queued_jobs',{}).get('reconstruction',{})
@@ -70,7 +71,12 @@ def prepare_work(service, root, row, kind, queue_only=False, *, allowed_dependen
             except (ValueError,OSError) as error:raise InputError('Cannot verify picking dependencies.') from error
             if config_uses_work({k:v for k,v in config.items() if k not in ('series','project_snapshot','source_result')},target):
                 raise InputError(row['name']+': picking uses this reconstruction. Create another reconstruction or delete the dependent picking first.')
-    if not queue_only:
+    if not queue_only and kind in ('preprocessing','ctf_redo','handedness_test'):
+        from .preprocessing import refresh
+        for task in ('preprocessing','ctf_redo','handedness_test'):
+            if row.get(task) and refresh(service,{'preprocessing':row[task]})['state'] in ACTIVE:
+                raise InputError(row['name']+': wait for active '+task+' before overwriting this preprocessing collection.')
+    if not queue_only and kind not in ('preprocessing','ctf_redo','handedness_test'):
         from .preprocessing import refresh
         data = service._read(root)
         if kind != 'picking':

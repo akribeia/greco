@@ -39,11 +39,20 @@ def cloud(service,project_id,series_id,assembly_id=None,*,apply_leveling=True):
 def leveled_display(data,job):
     """Rotate display coordinates and density offsets, leaving saved geometry intact."""
     report=job.get('tomogram_leveling')
-    if not report:return data
+    if not isinstance(report,dict) and job.get('work'):
+        result_path=Path(job['work'])/'result.json'
+        if result_path.is_file():
+            try:report=json.loads(result_path.read_text()).get('tomogram_leveling')
+            except (OSError,ValueError):report=None
+    if not isinstance(report,dict):return data
     rotation=np.asarray(report['rotation_zyx'],float)[::-1,::-1]
     if rotation.shape!=(3,3) or not np.isfinite(rotation).all():raise InputError('Invalid leveling rotation.')
     for point in data.get('points',data.get('meshes',[])):
         point['d'],point['q'],point['h']=map(float,rotation@np.array([point['d'],point['q'],point['h']]))
         if 'vertices' in point:point['vertices']=(np.asarray(point['vertices'])@rotation.T).tolist()
-    data.update(coordinate_frame='centred_leveled_dqh',leveled=True,tilt_axis_dqh=(rotation@np.array([0.,1.,0.])).tolist())
+    data.update(coordinate_frame='centred_leveled_dqh',leveled=True,tilt_axis_dqh=(rotation@np.array([0.,1.,0.])).tolist(),
+                original_plane_basis_dqh=[rotation[0,:].tolist(),rotation[1,:].tolist()],
+                leveled_plane_basis_dqh=[[1.,0.,0.],[0.,1.,0.]],
+                original_plane_centre_dqh=(np.asarray(report.get('centroid_zyx',[(data['dimensions_dqh'][0]-1)/2]*3),float)[::-1]-(data['dimensions_dqh'][0]-1)/2).tolist(),
+                leveled_plane_centre_dqh=(rotation@(np.asarray(report.get('centroid_zyx',[(data['dimensions_dqh'][0]-1)/2]*3),float)[::-1]-(data['dimensions_dqh'][0]-1)/2)).tolist())
     return data

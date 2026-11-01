@@ -468,7 +468,7 @@ details.pick-assembly[open]>summary::before,.pipeline-step[open]>summary::before
 .landmark-cloud-panel>.panel-header{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;font-size:12px}
 .landmark-cloud-count{color:var(--muted);font-size:10px;font-weight:400}
 .landmark-cloud-body{position:relative;padding:12px 16px 10px;min-height:60px}
-.landmark-cloud-svg{display:block;width:100%;max-width:650px;max-height:360px;margin:auto;overflow:visible}
+.landmark-cloud-svg{display:block;width:100%;max-width:650px;max-height:460px;margin:auto;overflow:visible}
 .cloud-faces polygon{fill:#f7f8fa;fill-opacity:.65;stroke:none}
 .cloud-edge{stroke:#8b95a4;stroke-width:1;vector-effect:non-scaling-stroke;fill:none;pointer-events:none}
 .cloud-edge-back{stroke:#cbd1da;stroke-dasharray:4 4}
@@ -501,3 +501,11 @@ details.pick-assembly[open]>summary::before,.pipeline-step[open]>summary::before
 .cloud-tilt-axis{pointer-events:none}
 .cloud-tilt-axis line{stroke:#61718b;stroke-width:1.3;stroke-dasharray:6 5;vector-effect:non-scaling-stroke}
 .cloud-tilt-axis text{fill:#61718b;font-size:11px}
+
+.cloud-plane-original{fill:#c85b75;fill-opacity:.22;stroke:#c85b75;stroke-opacity:.75;stroke-width:2}.cloud-plane-leveled{fill:#3b95a5;fill-opacity:.20;stroke:#3b95a5;stroke-opacity:.8;stroke-width:2}.cloud-original-key{color:#b24c67}.cloud-leveled-key{color:#278696}.landmark-cloud-svg{cursor:grab;touch-action:none}.landmark-density-canvas{cursor:grab;touch-action:none}
+
+.reconstruction-warning{margin-top:6px;color:#9a6700;line-height:1.5}
+.pick-assembly>summary .reconstruction-preprocessing-source{margin-left:auto;margin-right:0}
+.pick-assembly>summary .reconstruction-preprocessing-source+.assembly-delete-button{margin-left:0}
+
+#recon-view-grid .curation-tilt:disabled{opacity:1;cursor:default}

@@ -20,6 +20,7 @@
 
 """Production Advanced-mode orchestration on the configured bin8 raw-image grid."""
 import argparse,json,time
+from greco.project_layout import join as storage_path
 from pathlib import Path
 import numpy as np
 from . import progressive_alignment as progressive
@@ -33,13 +34,13 @@ from ..tomogram_thickness import reconstruct_stage
 
 
 def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
-        thickness=50.,entry_sigma=8.,rescue=True,smoothness=0.,stage_failure_limit=None):
+        thickness=50.,entry_sigma=8.,rescue=True,smoothness=0.,stage_failure_limit=None,excluded_view_indices=None):
     import cupy as cp
     options=checked_resolved(options)
     if not options['advanced_mode']:raise ValueError('Advanced-mode runner requires Advanced mode')
     if smoothness and any(options[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')):raise ValueError('Smoothness must be zero for angular refinement')
     output=Path(output)
-    if (output/'config.json').exists() or (output/'final_state.npz').exists():
+    if (storage_path(output, 'config.json')).exists() or (storage_path(output, 'final_state.npz')).exists():
         raise ValueError('Advanced alignment output already contains a run.')
     source_angles=np.asarray(angles,float);order=np.argsort(source_angles,kind='stable')
     from .stage_continuation import StageContinuation
@@ -58,18 +59,20 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
         runner=AdvancedRefiner(mode='common' if options['refine_common_axis'] else 'fixed',max_passes=options['progressive_max_passes'],rescue_enabled=rescue,rescue_state=rescue_state)
     trajectory=progressive.run(original,source_angles,output,raw_source=True,
         frozen_shifts_yx=frozen_shifts_yx,axis_deg=axis_deg,voxel=voxel,binning=8,
-        extra_rounds=5,exact_extra_rounds=True,landmark_support='accepted',cc_method='gradient',
+        excluded_view_indices=excluded_view_indices,extra_rounds=5,exact_extra_rounds=True,landmark_support='accepted',cc_method='gradient',
         solver_backend='gpu_schur',resample='exact',entry_search_sigma_px=entry_sigma,
         tomogram_thickness_percent=thickness,gcc_runner=runner,stage_acceptor=stage_acceptor)
-    summary=json.loads((output/'summary.json').read_text())
+    summary=json.loads((storage_path(output, 'summary.json')).read_text())
     if stage_acceptor is not None and stage_acceptor.stopped:
         raise RuntimeError(f'Advanced continuation stopped after {stage_acceptor.failures} consecutive nonconverged stages: '+str(summary['last_gcc_stop']))
     rounds=[r for r in trajectory if r['stage']=='extra_round']
-    if len(rounds)!=5 or not all(r['accepted'] for r in rounds):
+    retained_common = bool(rounds and rounds[-1].get('extra_round_rejected')
+                           and all(r['accepted'] for r in rounds[:-1]))
+    if not retained_common and (len(rounds)!=5 or not all(r['accepted'] for r in rounds)):
         raise RuntimeError(f"Advanced common phase stopped with {summary['last_gcc_stop']}; "
             f"accepted {len(summary['active_indices'])}/{len(source_angles)} tilts, "
             f"completed {sum(bool(r['accepted']) for r in rounds)}/5 accepted common rounds")
-    with np.load(output/'final_state.npz',allow_pickle=False) as d:state={k:np.array(d[k]) for k in d.files}
+    with np.load(storage_path(output, 'final_state.npz'),allow_pickle=False) as d:state={k:np.array(d[k]) for k in d.files}
     active=np.asarray(state['active_indices'],int);local=np.arange(len(active))
     raw=np.asarray(original,np.float32)[order];frozen=np.asarray(frozen_shifts_yx,float)[order]/8
     raw_dev=cp.asarray(raw);current_angles=state['angles_deg'][active].copy()
@@ -82,7 +85,7 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
         refine=AdvancedRefiner(mode=mode,max_passes=options['angular_max_passes'],rescue_enabled=rescue,rescue_state=rescue_state)
         records=[]
         for index in range(count):
-            directory=output/f'extra_round_{outer:02d}';directory.mkdir();stamp=time.monotonic()
+            directory=storage_path(output, f'extra_round_{outer:02d}');directory.mkdir();stamp=time.monotonic()
             stack=materialize_raw_stack_gpu(raw_dev,active,shifts,frozen[active],axes).get()
             volume=reconstruct_stage(gpu_reconstruct_wbp,stack,current_angles,thickness)
             landmarks,selection=detect_column_landmarks(stack,current_angles,volume,
@@ -92,24 +95,40 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
             np.savez_compressed(directory/'selected_landmarks.npz',**landmarks)
             progressive._write_json(directory/'selection.json',selection)
             progressive._write_landmark_projections(directory,volume,landmarks,current_angles,voxel)
-            candidate,manifest=refine(raw[active],current_angles,landmarks,shifts,
+            from .stage_continuation import refine_supported_extra
+            candidate,manifest,kept_views,retained_landmarks=refine_supported_extra(refine,raw[active],current_angles,landmarks,shifts,
                 source='raw',frozen_shifts_yx=frozen[active],axis_deg=axes,
                 round_index=index,round_count=count)
             np.savez_compressed(directory/'final_state.npz',**candidate)
+            manifest['input_active_indices']=order[active].tolist()
+            manifest['excluded_support_indices']=order[active[np.setdiff1d(np.arange(len(active)),kept_views)]].tolist()
             progressive._write_json(directory/'gcc_manifest.json',manifest)
-            decision=stage_acceptor.assess(manifest,candidate) if stage_acceptor else {}
+            previous=dict(positions_zyx=state['positions_zyx'],valid_views=state['valid_views'],
+                          cumulative_shifts_yx=shifts,angles_deg=current_angles,axis_rotation_deg=axes)
+            decision=stage_acceptor.reject_extra(manifest,previous,allow_tilt_order=True) if stage_acceptor else None
+            if decision is None:
+                decision=stage_acceptor.assess(manifest,candidate) if stage_acceptor else {}
             accepted=decision['accepted'] if decision else manifest['stop_reason']=='converged'
             record=dict(stage='extra_round',round=outer,phase=mode,phase_round=index,
                 active_count=len(active),accepted=accepted,selected_count=selection['selected_count'],
                 gcc_stop=manifest['stop_reason'],gcc_passes=manifest['passes'],
                 axis_rotation_deg=float(np.mean(candidate['axis_rotation_deg'])),runtime_s=time.monotonic()-stamp)
             record.update(decision)
+            record['excluded_support_indices']=manifest['excluded_support_indices'] if accepted else []
             progressive._write_json(directory/'metrics.json',record)
             progressive._write_json(directory/'acceptance.json',dict(accepted=accepted,reason=manifest['stop_reason'],**{k:v for k,v in decision.items() if k!='accepted'}))
             progressive._write_json(directory/'output_geometry.json',dict(active_indices=order[active].tolist(),
                 angles_deg=candidate['angles_deg'].tolist(),axis_rotation_deg=candidate['axis_rotation_deg'].tolist()))
-            trajectory.append(record);progressive._write_json(output/'trajectory.json',trajectory)
+            trajectory.append(record);progressive._write_json(storage_path(output, 'trajectory.json'),trajectory)
+            if decision.get('extra_round_rejected'):
+                outer+=1
+                break
             if not accepted:raise RuntimeError(f'Advanced {mode} round {index+1} did not converge: '+manifest['stop_reason'])
+            active=active[kept_views];local=np.arange(len(active))
+            np.savez_compressed(directory/'selected_landmarks.npz',**retained_landmarks)
+            progressive._write_landmark_projections(directory,volume,retained_landmarks,candidate['angles_deg'],voxel)
+            progressive._write_json(directory/'output_geometry.json',dict(active_indices=order[active].tolist(),
+                angles_deg=candidate['angles_deg'].tolist(),axis_rotation_deg=np.asarray(candidate['axis_rotation_deg']).tolist()))
             state.update(positions_zyx=candidate['positions_zyx'],valid_views=candidate['valid_views'],classes=candidate['classes'])
             shifts=candidate['cumulative_shifts_yx'].copy();axes=candidate['axis_rotation_deg'].copy();current_angles=candidate['angles_deg'].copy()
             records.append(record);outer+=1
@@ -118,7 +137,7 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
     final_stack=materialize_raw_stack_gpu(raw_dev,active,shifts,frozen[active],axes).get()
     # The checkpoint below stores accepted views in source order. Keep the
     # preview planes in that same order, including unsorted input angles.
-    progressive._write_mrcs(output/'aligned_bin8.mrcs',final_stack[np.argsort(order[active])],float(voxel))
+    progressive._write_mrcs(storage_path(output, 'aligned_bin8.mrcs'),final_stack[np.argsort(order[active])],float(voxel))
     # Export a source-indexed checkpoint. Acquisition angles remain identities;
     # the refined angles and raster rotations are separate numerical geometry.
     full_shifts=state['cumulative_shifts_yx'].copy();full_shifts[active]=shifts
@@ -130,20 +149,22 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
     state.update(cumulative_shifts_yx=full_shifts[inverse],angles_deg=source_angles.copy(),
         refined_angles_deg=full_angles[inverse],axis_rotation_deg=full_axes[inverse],
         active_indices=source_active,source_order=order,binning=np.int64(8),advanced_protocol=np.array(options['protocol']))
-    state['geometry_converged']=np.bool_(trajectory[-1].get('gcc_stop')=='converged')
-    np.savez_compressed(output/'final_state.npz',**state)
+    state['geometry_converged']=np.bool_(next((r.get('gcc_stop') for r in reversed(trajectory) if r.get('accepted')),None)=='converged')
+    np.savez_compressed(storage_path(output, 'final_state.npz'),**state)
     # Refresh readable shifts after the final phase, in acquisition order.
-    with (output/'shifts.csv').open('w') as stream:
+    with (storage_path(output, 'shifts.csv')).open('w') as stream:
         stream.write('stack_index,angle_deg,dy_binned,dx_binned,dy_fullres,dx_fullres\n')
         for i,(angle,shift) in enumerate(zip(source_angles,state['cumulative_shifts_yx'])):
             stream.write(f'{i},{angle:.6f},{shift[0]:.6f},{shift[1]:.6f},{shift[0]*8:.6f},{shift[1]*8:.6f}\n')
     # Stage output geometries refer to the same source identities as final state.
-    for directory in sorted(output.glob('stage_*'))+sorted(output.glob('extra_round_*'))[:5]:
+    for directory in sorted(storage_path(output, 'stage_*').parent.glob('stage_*'))+sorted(storage_path(output, 'extra_round_*').parent.glob('extra_round_*'))[:5]:
         path=directory/'output_geometry.json'
         if path.exists():
             d=json.loads(path.read_text());d['active_indices']=order[np.asarray(d['active_indices'],int)].tolist()
             progressive._write_json(path,d)
-    summary.update(geometry_converged=(trajectory[-1].get('gcc_stop')=='converged'),
+    summary['refinement_warnings']=['Tilt-angle refinement stopped to preserve tilt order. The tomogram uses the last accepted geometry.'] if any(r.get('angular_refinement_stopped') for r in trajectory) else []
+    summary['refinement_partial']=any(r.get('extra_round_rejected') for r in trajectory) or len(source_active)<len(source_angles)-len(excluded_view_indices or [])
+    summary.update(geometry_converged=(next((r.get('gcc_stop') for r in reversed(trajectory) if r.get('accepted')),None)=='converged'),
         consecutive_stage_failures=stage_acceptor.failures if stage_acceptor else 0,
         active_indices=source_active.tolist(),active_angles_deg=current_angles[column_order].tolist(),
         input_angles_deg=source_angles.tolist(),source_order=order.tolist(),
@@ -151,7 +172,7 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
         advanced_options=options,extra_rounds_run=outer,phases=phases,
         final_axis_rotation_deg=float(axes.mean()),axis_rotation_deg=full_axes[inverse].tolist(),
         protocol=options['protocol'],total_runtime_s=time.monotonic()-started)
-    progressive._write_json(output/'summary.json',summary)
+    progressive._write_json(storage_path(output, 'summary.json'),summary)
     return summary
 
 
@@ -166,6 +187,6 @@ def main():
     frozen=rows[:,2:]
     run(raw,angles,data['output'],options=data['options'],frozen_shifts_yx=frozen,
         axis_deg=data['axis_deg'],voxel=voxel,thickness=data['thickness'],
-        entry_sigma=data['entry_sigma'],rescue=data['rescue'],smoothness=data['smoothness'])
+        entry_sigma=data['entry_sigma'],rescue=data['rescue'],smoothness=data['smoothness'],excluded_view_indices=data.get('excluded_view_indices',[]))
 
 if __name__=='__main__':main()

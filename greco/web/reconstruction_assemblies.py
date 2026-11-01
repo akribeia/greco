@@ -4,7 +4,7 @@ import uuid
 from .metadata_cache import read_json
 from .projects import InputError
 
-FIELDS=('reconstruction','reconstruction_history','processing_steps','geometry_refinement','angle_refinement','refinement','picking_source','picking_step_id','last_refinement_number')
+FIELDS=('excluded_reconstruction_views','reconstruction_views_locked','reconstruction','reconstruction_history','processing_steps','geometry_refinement','angle_refinement','refinement','picking_source','picking_step_id','last_refinement_number')
 SETTINGS=('reconstruction_denoisers','reconstruction_alignment_options','reconstruction_entry_sigma_px','reconstruction_thickness_percent','reconstruction_final_binning','reconstruction_advanced_options')
 
 
@@ -45,6 +45,8 @@ def activate(data,identifier):
     capture(data)
     record=next((r for r in data.get('reconstruction_assemblies',[]) if r['id']==identifier),None)
     if record is None:raise InputError('Unknown reconstruction.')
+    from .preprocessing_assemblies import activate as activate_preprocessing
+    if record.get('preprocessing_assembly_id'):activate_preprocessing(data,record['preprocessing_assembly_id'])
     data['active_reconstruction_assembly']=identifier
     for key in SETTINGS:
         data.pop(key,None)
@@ -63,7 +65,7 @@ def activate(data,identifier):
         if saved.get('queued_reconstruction'):row.setdefault('queued_jobs',{})['reconstruction']=deepcopy(saved['queued_reconstruction'])
 
 
-def create(service,project_id,name,mode):
+def create(service,project_id,name,mode,preprocessing_id=None):
     if not isinstance(name,str) or not 1<=len(name.strip())<=100:raise InputError('Enter a reconstruction name (1–100 characters).')
     if mode not in ('standard','advanced'):raise InputError('Choose Simple or Advanced.')
     with service.lock:
@@ -71,7 +73,9 @@ def create(service,project_id,name,mode):
         if any(r['name'].casefold()==name.strip().casefold() for r in data['reconstruction_assemblies']):raise InputError('A reconstruction already has this name.')
         data.update(layout_version=3,reconstruction_layout_version=3)
         identifier=uuid.uuid4().hex[:8]
-        record=dict(id=identifier,name=name.strip(),mode=mode,series={})
+        preprocessing_id=preprocessing_id or data.get('active_preprocessing_assembly')
+        if not any(p['id']==preprocessing_id for p in data.get('preprocessing_assemblies',[])):raise InputError('Create and select a preprocessing collection first.')
+        record=dict(id=identifier,name=name.strip(),mode=mode,series={},preprocessing_assembly_id=preprocessing_id)
         for key in SETTINGS:
             if key in data and key!='reconstruction_advanced_options':record[key]=deepcopy(data[key])
         if mode=='advanced':
@@ -85,7 +89,7 @@ def create(service,project_id,name,mode):
 def select(service,project_id,identifier):
     with service.lock:
         root=service._root(project_id);data=service._read(root);created=ensure(data)
-        if data.get('active_reconstruction_assembly')==identifier:return service._view(project_id)
+        if data.get('active_reconstruction_assembly')==identifier and data.get('active_preprocessing_assembly')==current(data).get('preprocessing_assembly_id'):return service._view(project_id)
         activate(data,identifier)
         service._write(root,data,publish=created);return service._view(project_id)
 

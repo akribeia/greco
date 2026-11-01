@@ -88,7 +88,8 @@ function jobStateLabel(value,queued=false){const label=queued || value==='queued
 function projectHasActiveJobs(project){
   const busy=job=>['submitted','running','submitting','unknown'].includes(job?.state);
   const rowBusy=row=>['preprocessing','reconstruction','refinement','angle_refinement','geometry_refinement','picking','handedness_test','ctf_redo'].some(key=>busy(row[key])) || (row.processing_steps || []).some(step=>busy(step.job));
-  return (project?.series || []).some(rowBusy) ||
+  return (project?.preprocessing_assemblies || []).some(record=>record.id!==project.active_preprocessing_assembly && Object.values(record.series || {}).some(rowBusy)) ||
+    (project?.series || []).some(rowBusy) ||
     (project?.reconstruction_assemblies || []).some(record=>record.id!==project.active_reconstruction_assembly && Object.values(record.series || {}).some(rowBusy)) ||
     (project?.pick_assemblies || []).some(record=>record.id!==project.active_pick_assembly && Object.values(record.series || {}).some(rowBusy));
 }

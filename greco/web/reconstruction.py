@@ -55,6 +55,10 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
         root=service._root(project_id);data=service._read(root)
         from .reconstruction_assemblies import current
         record=current(data)
+        if record and record.get('preprocessing_assembly_id'):
+            from .preprocessing_assemblies import activate as activate_preprocessing
+            activate_preprocessing(data,record['preprocessing_assembly_id'])
+            service._write(root,data,publish=False)
         if 'reconstruction_assemblies' in data and record is None:raise InputError('Create a reconstruction first.')
         if record and (record['mode']=='advanced')!=advanced['advanced_mode']:raise InputError('The reconstruction mode is fixed; create another reconstruction to change it.')
         slurm=data.get('slurm',{})
@@ -129,7 +133,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
             row=rows[identifier];work=prepare_work(service,root,row,'reconstruction',queue_only,allowed_dependencies=('preprocessing',) if identifier in deferred else ())
             work=service.path(str(work))
             options=dict(cpus=data.get('preprocessing_options',{}).get('cpus',4),gpus=1)
-            config=dict(advanced_options=advanced,inputs=inputs[identifier],orientation=orientation,output=str(storage_path(work, 'output')),
+            config=dict(excluded_view_indices=list(row.get('excluded_reconstruction_views',[])) if advanced['advanced_mode'] else [],advanced_options=advanced,inputs=inputs[identifier],orientation=orientation,output=str(storage_path(work, 'output')),
                         tomogram_thickness_percent=tomogram_thickness_percent,final_binning=final_binning,
                         preprocessing_dependency=identifier in deferred,
                         final_reconstruction_protocol='native-wiener-sz-no-reliability-canonical-z-v1',
@@ -143,6 +147,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
                 config['alignment_options']=alignment
             path=storage_path(work, 'config.json');path.write_text(json.dumps(config,indent=2))
             (storage_path(work, 'job.sbatch')).write_text(render_script(slurm['template'],work,path,options,'greco.web.reconstruction_worker'))
+            row['reconstruction_views_locked']=True
             job=dict(advanced_options=advanced,state='submitted',work=str(work),host=slurm.get('submission_host',''),main_revision=revision,orientation=orientation,denoisers=denoisers,optimizer=optimizer,
                      tomogram_thickness_percent=tomogram_thickness_percent,final_binning=final_binning,
                      optimizer_version=1,

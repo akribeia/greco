@@ -247,9 +247,24 @@ def make_handler(service, session_token):
                 elif route == "/api/picker-template-select":
                     from .picking import select_template
                     result = select_template(service,data['project_id'],data['path'],assembly_id=data.get('assembly_id'))
+                elif route == '/api/preprocessing-assemblies':
+                    from .preprocessing_assemblies import create
+                    result=create(service,data['project_id'],data.get('name'))
+                elif route == '/api/select-preprocessing-assembly':
+                    from .preprocessing_assemblies import select
+                    result=select(service,data['project_id'],data['assembly_id'])
+                elif route == '/api/preprocessing-assembly-delete':
+                    from .preprocessing_assemblies import delete
+                    result=delete(service,data['project_id'],data['assembly_id'],data.get('confirmed',False))
+                elif route == '/api/reconstruction-views':
+                    from .reconstruction_views import save
+                    result=save(service,data['project_id'],data['series_id'],data.get('excluded_views'))
+                elif route == '/api/reconstruction-preprocessing':
+                    from .preprocessing_assemblies import bind_reconstruction
+                    result=bind_reconstruction(service,data['project_id'],data['assembly_id'],data['preprocessing_id'])
                 elif route == '/api/reconstruction-assemblies':
                     from .reconstruction_assemblies import create
-                    result=create(service,data['project_id'],data.get('name'),data.get('mode'))
+                    result=create(service,data['project_id'],data.get('name'),data.get('mode'),data.get('preprocessing_id'))
                 elif route == '/api/reconstruction-assembly-delete':
                     from .reconstruction_assemblies import delete
                     result=delete(service,data['project_id'],data['assembly_id'],data.get('confirmed',False))

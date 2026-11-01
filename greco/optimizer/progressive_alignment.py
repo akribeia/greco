@@ -39,6 +39,7 @@ Registration parameters:
 """
 
 from __future__ import annotations
+from greco.project_layout import join as storage_path
 
 import argparse
 import hashlib
@@ -74,7 +75,7 @@ def _write_landmark_projections(stage_dir, volume, landmarks, angles, voxel):
         masked_landmark_projection_gpu(volume, positions[valid[:, view]], float(angle), return_support=False)[0]
         for view, angle in enumerate(angles)
     ]).astype(np.float32, copy=False)
-    with mrcfile.new(stage_dir / 'landmarks_projection.mrcs', overwrite=False) as handle:
+    with mrcfile.new(stage_dir / 'landmarks_projection.mrcs', overwrite=True) as handle:
         handle.set_data(projections)
         handle.voxel_size = (float(voxel),) * 3
 
@@ -250,6 +251,7 @@ def _json_numpy(value):
 
 
 def _write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, allow_nan=False, default=_json_numpy) + '\n')
 
 
@@ -271,7 +273,7 @@ def run(original, angles, output, *, selector='bright_structure',
         search_support_diagnostics=False, diagnostic_source=None,
         solver_backend='cpu', cc_method='intensity',
         column_cell=32, column_width=30,
-        entry_search_sigma_px=8., tomogram_thickness_percent=50., gcc_runner=None, exact_extra_rounds=False,stage_acceptor=None):
+        entry_search_sigma_px=8., tomogram_thickness_percent=50., gcc_runner=None, exact_extra_rounds=False,stage_acceptor=None,excluded_view_indices=None):
     """Run the progressive all-active 2D registration in-process.
 
     original: (T, Y, X) float32 bin8 stack (any tilt order).
@@ -342,6 +344,10 @@ def run(original, angles, output, *, selector='bright_structure',
     from .bootstrap import signal_tilt_indices
     usable = signal_tilt_indices(original)
     excluded_signal = np.setdiff1d(np.arange(t0),usable)
+    excluded_user=np.asarray(excluded_view_indices or [],int)
+    if excluded_user.ndim!=1 or np.any((excluded_user<0)|(excluded_user>=t0)):raise ValueError('Invalid excluded view indices')
+    excluded_user_sorted=np.flatnonzero(np.isin(order,excluded_user))
+    usable=usable[~np.isin(usable,excluded_user_sorted)]
     if len(usable)<6:raise ValueError(f'At least six projections with finite, nonconstant signal are required; found {len(usable)}.')
     seed = usable[central_index_seed(angles[usable])]
     if len(excluded_signal):
@@ -403,11 +409,12 @@ def run(original, angles, output, *, selector='bright_structure',
                        sort_keys=True, default=str).encode()).hexdigest()
     if len(excluded_signal):
         config['excluded_signal_indices']=excluded_signal.tolist()
-        config['sha256']=hashlib.sha256(json.dumps(
-            {k:v for k,v in config.items() if k!='sha256'},sort_keys=True,default=str).encode()).hexdigest()
-    if (output / 'config.json').exists():
-        saved_config = json.loads((output / 'config.json').read_text())
-        for key, value, default in [('entry_search_sigma_px', entry_search_sigma_px, 8.),
+    config['excluded_user_indices']=excluded_user.tolist()
+    config['sha256']=hashlib.sha256(json.dumps(
+        {k:v for k,v in config.items() if k!='sha256'},sort_keys=True,default=str).encode()).hexdigest()
+    if (storage_path(output, 'config.json')).exists():
+        saved_config = json.loads((storage_path(output, 'config.json')).read_text())
+        for key, value, default in [('excluded_user_indices',excluded_user.tolist(),[]),('entry_search_sigma_px', entry_search_sigma_px, 8.),
                                     ('tomogram_thickness_percent', tomogram_thickness_percent, 50.),
                                     ('exact_extra_rounds',exact_extra_rounds,False),
                                     ('stage_continuation',stage_acceptor.config if stage_acceptor else None,None)]:
@@ -416,10 +423,10 @@ def run(original, angles, output, *, selector='bright_structure',
         if (saved_config.get('column_cell', 32), saved_config.get('column_width', 30)) != (column_cell, column_width):
             raise ValueError('resume column geometry mismatch')
 
-    if (output / 'config.json').exists():
-        config = json.loads((output / 'config.json').read_text())
+    if (storage_path(output, 'config.json')).exists():
+        config = json.loads((storage_path(output, 'config.json')).read_text())
     else:
-        _write_json(output / 'config.json', config)
+        _write_json(storage_path(output, 'config.json'), config)
 
     from ..scipy_resample_gpu import shift_stack_scipy_gpu
 
@@ -473,7 +480,7 @@ def run(original, angles, output, *, selector='bright_structure',
             incoming = [t for t in neighbours if blocked_incoming[t] < len(active)]
             if not incoming:
                 break
-        stage = output / f'stage_{stage_no:02d}'
+        stage = storage_path(output, f'stage_{stage_no:02d}')
         if stage.exists():
             if not resume:
                 raise RuntimeError(f'existing stage requires explicit resume: {stage}')
@@ -502,7 +509,7 @@ def run(original, angles, output, *, selector='bright_structure',
                     continue
             import shutil
             shutil.rmtree(stage)
-        stage.mkdir()
+        stage.mkdir(parents=True)
         started = time.monotonic()
         current_stack = _mat(original[active], cumulative[active], active)
         volume = reconstruct_stage(gpu_reconstruct_wbp, current_stack, angles[active],
@@ -556,7 +563,7 @@ def run(original, angles, output, *, selector='bright_structure',
                                    cc=cc, accepted=False, gcc_stop=None, reason=reason,
                                    **{k:v for k,v in decision.items() if k!='accepted'},
                                    runtime_s=time.monotonic() - started))
-            _write_json(output / 'trajectory.json', trajectory)
+            _write_json(storage_path(output, 'trajectory.json'), trajectory)
             if stage_acceptor is not None and stage_acceptor.stopped:break
             stage_no += 1
             continue
@@ -577,18 +584,33 @@ def run(original, angles, output, *, selector='bright_structure',
             excluded = enforce_global_margin_headroom(landmarks, angles[proposed],
                                                       original.shape[1], global_margin_buffer)
         _write_landmark_projections(stage, volume, landmarks, angles[proposed], voxel)
-        candidate_state, gcc_manifest = gcc_runner(original[proposed], angles[proposed],
-                                            landmarks, initial, resample=resample,
+        from .stage_continuation import refine_supported_extra
+        candidate_state, gcc_manifest, kept_views, retained_landmarks = refine_supported_extra(gcc_runner, original[proposed], angles[proposed],
+                                            landmarks, initial, exclude_unsupported=stage_acceptor is not None and last_accepted_stage is not None, resample=resample,
                                             source=source,
                                             frozen_shifts_yx=frozen[proposed] if raw_source else None,
                                             axis_deg=axis_deg,
                                             solver_backend=solver_backend,
                                             search_support_diag=search_support_diag,
                                             diag_plane_map=np.asarray(proposed, int))
+        gcc_manifest['input_active_indices']=list(proposed)
+        gcc_manifest['excluded_support_indices']=np.asarray(proposed,int)[np.setdiff1d(np.arange(len(proposed)),kept_views)].tolist()
         _write_json(stage / 'gcc_manifest.json', gcc_manifest)
-        decision=stage_acceptor.assess(gcc_manifest,candidate_state) if stage_acceptor else {}
+        decision=(stage_acceptor.reject_incoming(gcc_manifest,final_state)
+                  if stage_acceptor is not None and incoming and last_accepted_stage is not None else None)
+        rejected_expansion=bool(decision and decision.get('incoming_rejected'))
+        if rejected_expansion:
+            for target in incoming:
+                if target not in active:blocked_incoming[int(target)]=len(active)
+        else:
+            decision=stage_acceptor.assess(gcc_manifest,candidate_state) if stage_acceptor else {}
         accepted = decision['accepted'] if decision else accepted_stop_reason(gcc_manifest['stop_reason'])
         if accepted:
+            usable=usable[~np.isin(usable,gcc_manifest['excluded_support_indices'])]
+            proposed=np.asarray(proposed,int)[kept_views].tolist()
+            landmarks=retained_landmarks
+            np.savez_compressed(stage / 'selected_landmarks.npz', **landmarks)
+            _write_landmark_projections(stage, volume, landmarks, angles[proposed], voxel)
             commit_axis(candidate_state)
             final_state = candidate_state
             cumulative[proposed] = final_state['cumulative_shifts_yx']
@@ -634,8 +656,8 @@ def run(original, angles, output, *, selector='bright_structure',
                          blocked_incoming=blocked_incoming))
         np.savez_compressed(stage / 'final_state.npz', **candidate_state)
         trajectory.append(record)
-        _write_json(output / 'trajectory.json', trajectory)
-        if not accepted or len(active) == t0:
+        _write_json(storage_path(output, 'trajectory.json'), trajectory)
+        if (not accepted and not rejected_expansion) or len(active) == t0:
             break
         stage_no += 1
 
@@ -646,8 +668,8 @@ def run(original, angles, output, *, selector='bright_structure',
     # Unaccepted rounds stop the loop without touching the state.
     if extra_rounds > 0 and last_accepted_stage is not None and not (stage_acceptor is not None and stage_acceptor.stopped):
         for r in range(extra_rounds):
-            rdir = output / f'extra_round_{r:02d}'
-            rdir.mkdir(exist_ok=True)
+            rdir = storage_path(output, f'extra_round_{r:02d}')
+            rdir.mkdir(parents=True, exist_ok=True)
             started = time.monotonic()
             current_stack = _mat(original[active], cumulative[active], active)
             volume = reconstruct_stage(gpu_reconstruct_wbp, current_stack, angles[active],
@@ -661,18 +683,27 @@ def run(original, angles, output, *, selector='bright_structure',
             np.savez_compressed(rdir / 'selected_landmarks.npz', **landmarks)
             _write_json(rdir / 'selection.json', sel_report)
             _write_landmark_projections(rdir, volume, landmarks, angles[active], voxel)
-            round_state, gcc_manifest = gcc_runner(original[active], angles[active], landmarks,
-                                                cumulative[active], resample=resample,
+            from .stage_continuation import refine_supported_extra
+            round_state, gcc_manifest, kept_views, retained_landmarks = refine_supported_extra(gcc_runner, original[active], angles[active], landmarks,
+                                                cumulative[active], exclude_unsupported=stage_acceptor is not None, resample=resample,
                                                 source=source,
                                                 frozen_shifts_yx=frozen[active] if raw_source else None,
                                                 axis_deg=axis_deg,
                                                 solver_backend=solver_backend,
                                                 search_support_diag=search_support_diag,
                                                 diag_plane_map=np.asarray(active, int))
+            gcc_manifest['input_active_indices']=list(active)
+            gcc_manifest['excluded_support_indices']=np.asarray(active,int)[np.setdiff1d(np.arange(len(active)),kept_views)].tolist()
             _write_json(rdir / 'gcc_manifest.json', gcc_manifest)
-            decision=stage_acceptor.assess(gcc_manifest,round_state) if stage_acceptor else {}
+            decision=stage_acceptor.reject_extra(gcc_manifest,final_state) if stage_acceptor else None
+            if decision is None:
+                decision=stage_acceptor.assess(gcc_manifest,round_state) if stage_acceptor else {}
             accepted = decision['accepted'] if decision else accepted_stop_reason(gcc_manifest['stop_reason'])
             if accepted:
+                active=np.asarray(active,int)[kept_views].tolist()
+                landmarks=retained_landmarks
+                np.savez_compressed(rdir / 'selected_landmarks.npz', **landmarks)
+                _write_landmark_projections(rdir, volume, landmarks, angles[active], voxel)
                 commit_axis(round_state)
                 cumulative[active] = round_state['cumulative_shifts_yx']
                 final_state = round_state
@@ -682,6 +713,7 @@ def run(original, angles, output, *, selector='bright_structure',
                           active_count=len(active),
                           angular_min=float(angles[active[0]]),
                           angular_max=float(angles[active[-1]]),
+                          excluded_support_indices=gcc_manifest['excluded_support_indices'] if accepted else [],
                           selected_count=sel_report['selected_count'],
                           candidate_count=sel_report['merged_count'],
                           gcc_stop=gcc_manifest['stop_reason'],
@@ -702,7 +734,7 @@ def run(original, angles, output, *, selector='bright_structure',
                         dict(active_indices=active, cumulative_shifts_yx=cumulative.tolist()))
             np.savez_compressed(rdir / 'final_state.npz', **round_state)
             trajectory.append(record)
-            _write_json(output / 'trajectory.json', trajectory)
+            _write_json(storage_path(output, 'trajectory.json'), trajectory)
             if not accepted:
                 break
             # until convergence: a 'converged' round IS the convergence signal
@@ -731,11 +763,11 @@ def run(original, angles, output, *, selector='bright_structure',
                 raw_clearance_min_px=float(clr.min()) if len(clr) else None,
                 raw_clearance_p10_px=float(np.quantile(clr, .10)) if len(clr) else None,
                 raw_clearance_median_px=float(np.median(clr)) if len(clr) else None)
-        _write_json(output / 'raw_search_support_diagnostic.json', report)
+        _write_json(storage_path(output, 'raw_search_support_diagnostic.json'), report)
 
     final_stack = _mat(original[active], cumulative[active], active)
-    _write_mrcs(output / 'aligned_bin8.mrcs', final_stack, float(voxel))
-    np.savez_compressed(output / 'final_state.npz',
+    _write_mrcs(storage_path(output, 'aligned_bin8.mrcs'), final_stack, float(voxel))
+    np.savez_compressed(storage_path(output, 'final_state.npz'),
                         positions_zyx=final_state['positions_zyx'],
                         cumulative_shifts_yx=cumulative,
                         valid_views=final_state['valid_views'],
@@ -745,23 +777,23 @@ def run(original, angles, output, *, selector='bright_structure',
     sel_final = (last_accepted_stage or stage) / 'selected_landmarks.npz'
     if sel_final.exists():
         with np.load(sel_final) as d:
-            np.savez_compressed(output / 'selected_landmarks_final.npz', **d)
+            np.savez_compressed(storage_path(output, 'selected_landmarks_final.npz'), **d)
     shifts = np.zeros((t0, 2), float)
     shifts[active] = cumulative[active]
     fullres = shifts * float(binning)
-    with (output / 'shifts.csv').open('w') as h:
+    with (storage_path(output, 'shifts.csv')).open('w') as h:
         h.write('stack_index,angle_deg,dy_binned,dx_binned,dy_fullres,dx_fullres\n')
         for i in range(t0):
             h.write(f'{i},{angles[i]:.6f},{shifts[i, 0]:.6f},{shifts[i, 1]:.6f},'
                     f'{fullres[i, 0]:.6f},{fullres[i, 1]:.6f}\n')
-    _write_json(output / 'summary.json', dict(
+    _write_json(storage_path(output, 'summary.json'), dict(
         stage_continuation=stage_acceptor.config if stage_acceptor else None,
         consecutive_stage_failures=stage_acceptor.failures if stage_acceptor else 0,
         continuation_stopped=stage_acceptor.stopped if stage_acceptor else False,
         config_sha256=config['sha256'], stages=len(trajectory),final_axis_rotation_deg=axis_deg,
         extra_rounds_run=sum(1 for r in trajectory if r.get('stage') == 'extra_round'),
         active_indices=active, active_angles_deg=angles[active].tolist(),
-        excluded_signal_indices=excluded_signal.tolist(),excluded_signal_angles_deg=angles[excluded_signal].tolist(),
+        excluded_user_indices=excluded_user.tolist(),excluded_signal_indices=excluded_signal.tolist(),excluded_signal_angles_deg=angles[excluded_signal].tolist(),
         full_range=len(active) == t0, blocked_incoming=sorted(blocked_incoming),
         branch_policy='independent_CC_frontiers_retry_after_opposite_growth_v1',
         last_gcc_stop=trajectory[-1]['gcc_stop'] if trajectory else None,

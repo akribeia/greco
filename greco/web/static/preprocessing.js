@@ -36,6 +36,14 @@ function renderNext() {
     return;
   }
   const row=selectedSeries();
+  const reconstructionSource=state.stage==='reconstruction'?reconstructionAssembly()?.preprocessing_assembly_id:null;
+  if(reconstructionSource && reconstructionSource!==state.project.active_preprocessing_assembly){
+    $('workspace').innerHTML='<div class="empty-state">Loading reconstruction inputs…</div>';
+    api('/api/select-reconstruction-assembly',{project_id:state.project.id,assembly_id:state.project.active_reconstruction_assembly}).then(saveProject).catch(error=>notify(error.message));return;
+  }
+  if(state.stage==='preprocessing' && state.project.preprocessing_layout_version===3 && !state.project.active_preprocessing_assembly){
+    $('workspace').innerHTML='<div class="page-heading"><div><h1>Preprocessing</h1></div></div>';mountPreprocessingAssemblies();return;
+  }
   if(state.stage==='reconstruction' && !reconstructionAssembly()){
     $('workspace').innerHTML='<div class="page-heading"><div><h1>Reconstruction</h1></div></div>';
     mountReconstructionAssemblies();return;
@@ -46,8 +54,8 @@ function renderNext() {
   clearTimeout(state.refinementTimer);
   clearTimeout(state.angleRefinementTimer);
   clearTimeout(state.contrastTimer);
-  if(!state.preprocessOptions || state.preprocessOptionsProjectId!==state.project.id) {
-    state.preprocessOptionsProjectId=state.project.id;
+  if(!state.preprocessOptions || state.preprocessOptionsProjectId!==state.project.id+':'+state.project.active_preprocessing_assembly) {
+    state.preprocessOptionsProjectId=state.project.id+':'+state.project.active_preprocessing_assembly;
     state.preprocessOptions={cs_mm:state.project?.metadata.cs_mm ?? 2.7,amp_contrast:state.project?.metadata.amplitude_contrast ?? .1,...(state.project?.preprocessing_options || {})};
     if(state.project?.ctf_axis_protocol!=='ctf-detector-frame-v1' && !state.project?.orientation)state.preprocessOptions.ctf_spatial_axis_deg=null;
     if(state.project.orientation)state.preprocessOptions.df_hand=state.project.orientation.df_hand;
@@ -85,6 +93,7 @@ function renderNext() {
     mountReconstructionSteps(row);
     mountPickingSource(row);
   }
+  if(state.stage==='preprocessing')mountPreprocessingAssemblies();
 }
 function bindPreprocessingActions(job,kind='preprocessing',badgeId='prep-status') {
   const badge=$(badgeId);
@@ -145,6 +154,16 @@ async function pollPreprocessing(projectId,seriesId) {
     $('prep-status').className='badge '+(job.state==='completed'?'':'pending');
     bindPreprocessingActions(job);
     $('prep-job-info').textContent=[job.job_id?'Slurm job '+job.job_id:'',job.final_binning?`Final bin ${job.final_binning}`:'',job.work || '',job.error || job.status_error || ''].filter(Boolean).join(' · ');
+    if(job.work) {
+      const axis=job.ctf_local_geometry?.tilt_axis_deg ?? job.options?.ctf_spatial_axis_deg;
+      const axisNote=document.createElement('div');
+      axisNote.textContent='Current tilt axis (β): '+(typeof axis==='number' && Number.isFinite(axis)?axis.toFixed(2)+'°':'Unknown');
+      $('prep-job-info').append(axisNote);
+      const hand=job.ctf_local_geometry?.handedness ?? job.options?.df_hand;
+      const handNote=document.createElement('div');
+      handNote.textContent='Current defocus handedness: '+(hand===1?'+1':hand===-1?'−1':'Unknown');
+      $('prep-job-info').append(handNote);
+    }
     if(job.state==='completed') {
       if(job.tilt_display_version!==2) {
         $('prep-job-info').textContent='Restart the Greco web server, then reload this page to use the corrected tilt/defocus display.';
@@ -185,4 +204,29 @@ async function submitPreprocessing(event) {
     notify(result.submission_errors.length?'Some submissions failed. Review the errors.':all?'Preprocessing submitted to Slurm.':'Preprocessing submitted to Slurm.');
   } catch(error) { if($('prep-error')) $('prep-error').textContent=error.message; }
   finally { buttons.forEach(button=>button.disabled=false); }
+}
+
+function mountPreprocessingAssemblies(){
+  const project=state.project,workspace=$('workspace'),heading=workspace.querySelector('.page-heading');
+  const add=document.createElement('button');add.className='button primary';add.textContent='+ New preprocessing';heading.append(add);
+  add.onclick=()=>{
+    const dialog=document.createElement('dialog');dialog.className='assembly-job-dialog';
+    dialog.innerHTML=`<form><h3>New preprocessing</h3><label class="metadata-field"><span>Name</span><input name="name" maxlength="100" required value="Preprocessing ${String((project.preprocessing_assemblies || []).length+1).padStart(3,'0')}"></label><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Create</button></div></form>`;
+    document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.querySelector('[type=button]').onclick=()=>dialog.close();
+    dialog.querySelector('form').onsubmit=async event=>{event.preventDefault();event.submitter.disabled=true;try{const result=await api('/api/preprocessing-assemblies',{project_id:project.id,name:dialog.querySelector('[name=name]').value});dialog.close();state.preprocessOptions=null;saveProject(result);}catch(error){dialog.querySelector('.form-error').textContent=error.message;event.submitter.disabled=false;}};
+    dialog.showModal();
+  };
+  const list=document.createElement('div');list.className='pick-assemblies';const content=workspace.querySelector('.preprocessing-layout');
+  for(const record of project.preprocessing_assemblies || []){
+    const panel=document.createElement('details');panel.className='pick-assembly';
+    panel.innerHTML=`<summary><strong>${esc(record.name)}</strong><button type="button" class="button secondary assembly-delete-button">Delete</button></summary>`;
+    panel.querySelector('button').onclick=event=>{event.preventDefault();event.stopPropagation();
+      const dialog=document.createElement('dialog');dialog.className='assembly-job-dialog';dialog.innerHTML=`<form><h3>Delete preprocessing</h3><p>${esc(record.name)}</p><label class="check-line"><span>I confirm permanent deletion</span><input type="checkbox" required></label><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Delete</button></div></form>`;
+      document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.querySelector('[type=button]').onclick=()=>dialog.close();dialog.querySelector('form').onsubmit=async event=>{event.preventDefault();event.submitter.disabled=true;try{const result=await api('/api/preprocessing-assembly-delete',{project_id:project.id,assembly_id:record.id,confirmed:true});dialog.close();state.preprocessOptions=null;saveProject(result);}catch(error){dialog.querySelector('.form-error').textContent=error.message;event.submitter.disabled=false;}};dialog.showModal();
+    };
+    if(record.id===project.active_preprocessing_assembly && content){panel.open=true;const body=document.createElement('div');body.className='assembly-body';body.append(content);panel.append(body);}
+    panel.addEventListener('toggle',async()=>{if(!panel.isConnected || !panel.open || record.id===state.project.active_preprocessing_assembly)return;try{const result=await api('/api/select-preprocessing-assembly',{project_id:project.id,assembly_id:record.id});state.preprocessOptions=null;saveProject(result);}catch(error){notify(error.message);}});
+    list.append(panel);
+  }
+  heading.after(list);
 }

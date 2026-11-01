@@ -295,10 +295,10 @@ class ProjectService:
             data = read_json(self, file)
             if data.get("version") != 1 or not isinstance(data.get("series"), list):
                 raise InputError("Unsupported project version.")
-            if data.get('layout_version') not in (2,3) or data.get('preprocessing_layout_version')!=2 or data.get('reconstruction_layout_version') not in (2,3):
+            if data.get('layout_version') not in (2,3) or data.get('preprocessing_layout_version') not in (2,3) or data.get('reconstruction_layout_version') not in (2,3):
                 raise InputError('This project must use the definitive Greco layout.')
         else:
-            data = dict(version=1, layout_version=3, preprocessing_layout_version=2, reconstruction_layout_version=3, segmentation_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
+            data = dict(version=1, layout_version=3, preprocessing_layout_version=3, preprocessing_assemblies=[], reconstruction_layout_version=3, segmentation_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
         if self.slurm_store is not None:
             shared = self.slurm_store.load()
             if shared is None and data.get('slurm', {}).get('template'):
@@ -308,6 +308,8 @@ class ProjectService:
         return data
 
     def _write(self, root, data, *, publish=True):
+        from .preprocessing_assemblies import capture as capture_preprocessing
+        capture_preprocessing(data)
         from .pick_assemblies import capture
         capture(data)
         from .reconstruction_assemblies import capture as capture_recon

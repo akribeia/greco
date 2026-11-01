@@ -106,14 +106,12 @@ def run(config):
             advanced_config=storage_path(output,'advanced_config.json')
             advanced_config.write_text(json.dumps(dict(stack=str(source),angles=data['inputs']['rawtlt'],
                 frozen_shifts=str(frozen),output=str(alignment),options=advanced,
-                axis_deg=data['orientation']['rotation_deg'],thickness=thickness,entry_sigma=sigma,
+                excluded_view_indices=data.get('excluded_view_indices',[]),axis_deg=data['orientation']['rotation_deg'],thickness=thickness,entry_sigma=sigma,
                 rescue=guidance['rescue_tilts'] if guidance else True,
                 smoothness=guidance['smoothness_strength'] if guidance else 0.),indent=2))
             command=[sys.executable,'-m','greco.optimizer.advanced','--config',str(advanced_config)]
         (storage_path(output, 'command.json')).write_text(json.dumps(command,indent=2))
         subprocess.run(command,env=env,cwd=ROOT,check=True)
-        from ..reconstruction_layout import organize_engine_output
-        organize_engine_output(output)
         if advanced.get('fine_scale_refinement'):
             from ..optimizer.fine_scale import run as refine_fine_scale
             refine_fine_scale(data,output,source)
@@ -184,10 +182,18 @@ def run(config):
         denoise_outputs(data,result)
         if not summary['full_range']:
             excluded=summary.get('excluded_signal_indices',[])
-            if excluded and len(active)+len(excluded)==result['total_tilts']:
+            user_excluded=summary.get('excluded_user_indices',[])
+            if user_excluded and len(active)+len(set(user_excluded)|set(excluded))==result['total_tilts']:
+                result['warning']=f"Excluded {len(user_excluded)} views selected before submission. Tomogram uses {len(active)}/{result['total_tilts']} tilts."
+            elif excluded and len(active)+len(excluded)==result['total_tilts']:
                 result['warning']=f"Excluded {len(excluded)} projections without usable signal. Tomogram uses {len(active)}/{result['total_tilts']} tilts."
             else:
                 result['warning']=f"Greco stopped before the full range: {len(active)}/{result['total_tilts']} accepted tilts. Tomogram uses accepted tilts."
+        if summary.get('refinement_partial'):
+            result['refinement_partial']=True
+            result['warning']=' · '.join(filter(None,[result.get('warning'),'Partial refinement: tomogram reconstructed from the last accepted geometry; unsupported views or rounds were excluded.']))
+        if summary.get('refinement_warnings'):
+            result['warning']=' · '.join(filter(None,[result.get('warning'),*summary['refinement_warnings']]))
         if not result['geometry_converged']:
             result['warning']=' · '.join(filter(None,[result.get('warning'),
                 'Final geometry is provisional: the last refinement round reached its iteration limit.']))

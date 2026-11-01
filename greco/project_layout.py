@@ -13,6 +13,7 @@ STA_CATEGORIES={'extraction':'extraction',
  'ctf_refinement':'ctf_refinement','postprocessing':'postprocessing'}
 ROOTS=('preprocessing','reconstruction','picking','sta','segmentation')
 _ROOT_CACHE=set()
+_PREPROCESSING_LAYOUT_CACHE={}
 
 def safe_name(value):
     text=unicodedata.normalize('NFC',str(value)).strip()
@@ -70,9 +71,13 @@ def work_path(root,row,kind,queued=False):
         record=next((r for r in data.get('pick_assemblies',[]) if r['id']==row.get('pick_assembly_id')),None)
         if record is None:raise ValueError('Select a picking category first.')
         result=record_directory(root,record,'picking')/'series'/series
-    elif kind=='preprocessing':result=root/'preprocessing'/series
-    elif kind=='ctf_redo':result=root/'preprocessing'/series/'.ctf-pending'
-    elif kind=='handedness_test':result=root/'preprocessing'/series/'ctf'/'handedness'
+    elif kind in ('preprocessing','ctf_redo','handedness_test'):
+        data=json.loads((root/'project.json').read_text())
+        record=next((r for r in data.get('preprocessing_assemblies',[]) if r['id']==row.get('preprocessing_assembly_id')),None)
+        if data.get('preprocessing_layout_version')==3 and record is None:raise ValueError('Create a preprocessing collection first.')
+        result=(record_directory(root,record,'preprocessing') if record else root/'preprocessing')/series
+        if kind=='ctf_redo':result=result/'.ctf-pending'
+        elif kind=='handedness_test':result=result/'ctf/handedness'
     elif kind=='reconstruction':
         data=json.loads((root/'project.json').read_text()) if (root/'project.json').exists() else {}
         record=next((r for r in data.get('reconstruction_assemblies',[]) if r['id']==row.get('reconstruction_assembly_id')),None)
@@ -105,10 +110,22 @@ def preprocessing_work(path):
         if kind=='preprocessing':return work
     return job_work(path)
 
+def _preprocessing_depth(root):
+    manifest=Path(root)/'project.json'
+    stat=manifest.stat();stamp=(stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+    cached=_PREPROCESSING_LAYOUT_CACHE.get(root)
+    if cached is None or cached[0]!=stamp:
+        depth=3 if json.loads(manifest.read_text()).get('preprocessing_layout_version',2)==3 else 2
+        _PREPROCESSING_LAYOUT_CACHE[root]=(stamp,depth)
+    return _PREPROCESSING_LAYOUT_CACHE[root][1]
+
+
 def _context(path, root):
     parts = path.relative_to(root).parts
     if len(parts)>=2 and parts[0]=='preprocessing':
-        work=root.joinpath(*parts[:2]);rest=list(parts[2:])
+        length=_preprocessing_depth(root)
+        if len(parts)<length:return None,[],None
+        work=root.joinpath(*parts[:length]);rest=list(parts[length:])
         if rest and rest[0]=='.ctf-pending':return work/rest[0],rest[1:],'preprocessing'
         if rest[:2]==['ctf','handedness']:return work/'ctf/handedness',rest[2:],'handedness'
         return work,rest,'preprocessing'
@@ -233,7 +250,7 @@ def initialize(root,data,*,previous=None):
         if value!=old:
             path.parent.mkdir(parents=True,exist_ok=True)
             path.write_text(json.dumps(value,indent=2))
-    for key in ('series','reconstruction_assemblies','pick_assemblies','particle_assemblies','segmentations'):
+    for key in ('series','preprocessing_assemblies','reconstruction_assemblies','pick_assemblies','particle_assemblies','segmentations'):
         assign_names(data.get(key,[]))
     for row in data['series']:
         from .web.reconstruction_steps import ensure
@@ -242,7 +259,7 @@ def initialize(root,data,*,previous=None):
     def inputs_manifest(value):
         return {'series':[dict(id=r['id'],name=r['name'],mdoc_path=r.get('mdoc_path'),gain_path=r.get('gain_path'),gain_flip_y=r.get('gain_flip_y',False),movies=[t.get('movie_path') for t in r.get('tilts',[])]) for r in value.get('series',[])]}
     publish(inputs/'manifest.json',inputs_manifest(data),inputs_manifest(previous) if previous else None)
-    for key,folder,filename in [('reconstruction_assemblies','reconstruction','category.json'),('pick_assemblies','picking','category.json'),('particle_assemblies','sta','assembly.json'),('segmentations','segmentation','category.json')]:
+    for key,folder,filename in [('preprocessing_assemblies','preprocessing','category.json'),('reconstruction_assemblies','reconstruction','category.json'),('pick_assemblies','picking','category.json'),('particle_assemblies','sta','assembly.json'),('segmentations','segmentation','category.json')]:
         old_records={record['id']:record for record in previous.get(key,[])}
         for record in data.get(key,[]):
             directory=record_directory(root,record,folder)

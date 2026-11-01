@@ -55,7 +55,7 @@ function reconstructionAdvancedPanel() {
 }
 function reconstructionFineScalePanel(){
   const options=reconstructionAdvancedDraft();
-  return `<div id="recon-fine-scale-options" class="parameter-section" hidden><label class="check-line"><span>Fine-scale refinement</span><input id="recon-fine-scale" type="checkbox" ${options.fine_scale_refinement?'checked':''}></label><div id="recon-fine-scale-fields" class="fine-scale-controls"><label class="fine-scale-field"><span>Binning</span><select id="recon-fine-binning">${[4,2,1].map(bin=>`<option value="${bin}" ${bin===(options.fine_scale_binning ?? 4)?'selected':''}>Bin ${bin}</option>`).join('')}</select></label><label class="fine-scale-field"><span>Passes</span><input id="recon-fine-rounds" type="number" min="1" max="20" step="1" value="${options.fine_scale_rounds ?? 5}"></label></div><small class="recon-fine-help">Same landmarks and refinement settings. CTF is re-estimated before and after.</small></div><div id="recon-leveling-options" class="parameter-section" hidden><label class="check-line"><span>Tomogram leveling</span><input id="recon-leveling" type="checkbox" ${options.tomogram_leveling?'checked':''}></label><small class="recon-fine-help">Fits a reference plane to the reconstructed landmark positions and applies a rigid 3D rotation to level the tomogram.</small></div>`;
+  return `<div id="recon-fine-scale-options" class="parameter-section" hidden><label class="check-line"><span>Fine-scale refinement</span><input id="recon-fine-scale" type="checkbox" ${options.fine_scale_refinement?'checked':''}></label><div id="recon-fine-scale-fields" class="fine-scale-controls"><label class="fine-scale-field"><span>Binning</span><select id="recon-fine-binning">${[4,2,1].map(bin=>`<option value="${bin}" ${bin===(options.fine_scale_binning ?? 4)?'selected':''}>Bin ${bin}</option>`).join('')}</select></label><label class="fine-scale-field"><span>Passes</span><input id="recon-fine-rounds" type="number" min="1" max="20" step="1" value="${options.fine_scale_rounds ?? 5}"></label></div><small class="recon-fine-help">Same landmarks and refinement settings. CTF is re-estimated before and after.<br><strong>Warning:</strong> This can be slow and is not required to reconstruct at bin 4, bin 2 or bin 1.</small></div><div id="recon-leveling-options" class="parameter-section" hidden><label class="check-line"><span>Tomogram leveling</span><input id="recon-leveling" type="checkbox" ${options.tomogram_leveling?'checked':''}></label><small class="recon-fine-help">Fits a reference plane to the reconstructed landmark positions and applies a rigid 3D rotation to level the tomogram.</small></div>`;
 }
 function reconstructionAdvancedSelection() {
   return {enabled:!!reconstructionAdvancedDraft().enabled,...Object.fromEntries(reconstructionAdvancedFields.map(([key])=>[key,document.querySelector(`[data-recon-advanced="${key}"]`).checked])),defocus_handedness:Number($('recon-df-hand').value),flip_tomogram_z:$('recon-flip-z').checked,tomogram_leveling:!!$('recon-leveling')?.checked,fine_scale_refinement:!!$('recon-fine-scale')?.checked,fine_scale_binning:Number($('recon-fine-binning')?.value ?? 4),fine_scale_rounds:Number($('recon-fine-rounds')?.value ?? 5)};
@@ -110,7 +110,7 @@ function mountReconstructionTS(){
       else showReconstructionTS();
     });controls.append(button);
   }
-  check.checked=false;check.textContent='Tomogram';
+  check.checked=false;check.textContent=reconstructionViewsEditable()?'Exclude views':'Tomogram';
   check.addEventListener('click',()=>{check.checked=!check.checked;check.dispatchEvent(new Event('change'));});
   let tomogramView=null;
   check.addEventListener('change',()=>{
@@ -122,7 +122,9 @@ function mountReconstructionTS(){
       state.volumeMethodChosen=tomogramView.chosen;
       $('volume-axis').value=tomogramView.axis;
     }
-    check.textContent=check.checked?'Tilt series':'Tomogram';
+    check.textContent=reconstructionViewsEditable()?'Exclude views':check.checked?'Tilt series':'Tomogram';
+    $('recon-view-grid').hidden=!check.checked;
+    if(check.checked)$('volume-empty').hidden=true;
     check.classList.toggle('active',check.checked);check.setAttribute('aria-pressed',String(check.checked));
     $('recon-ts-viewer').hidden=!check.checked;
     $('recon-ts-scroll').hidden=!check.checked;
@@ -141,6 +143,7 @@ function mountReconstructionTS(){
   api('/api/preprocessing-status?'+new URLSearchParams({project_id:projectId,series_id:seriesId})).then(job=>{
     if(state.project?.id!==projectId || state.selected!==seriesId || !check.isConnected)return;
     state.reconstructionTSStatus=job;
+    renderReconstructionViewGrid();
     check.disabled=job.state!=='completed' || !job.angles?.length;
     if(check.checked)showReconstructionTS();
   }).catch(error=>{check.title=error.message;});
@@ -148,6 +151,7 @@ function mountReconstructionTS(){
 }
 function showReconstructionTS(){
   if(!$('recon-ts')?.checked)return;
+  renderReconstructionViewGrid();
   const landmarkButton=document.querySelector('[data-volume-method=landmarks]');
   if(landmarkButton){landmarkButton.hidden=!state.reconstructionStatus?.landmarks;landmarkButton.disabled=!state.reconstructionStatus?.landmarks;landmarkButton.classList.toggle('active',state.volumeMethod==='landmarks');landmarkButton.setAttribute('aria-pressed',String(state.volumeMethod==='landmarks'));}
   const landmarks=state.volumeMethod==='landmarks';
@@ -163,6 +167,7 @@ function showReconstructionTS(){
     const slider=$('recon-ts-slider');slider.disabled=false;slider.max=refined.angles.length-1;
     if(slider.dataset.geometryRevision!==String(refined.revision)){slider.value=refined.angles.reduce((best,a,i)=>Math.abs(a)<Math.abs(refined.angles[best])?i:best,0);slider.dataset.geometryRevision=String(refined.revision);}
     const index=Math.max(0,Math.min(refined.angles.length-1,Number(slider.value)));
+    highlightReconstructionView(refined.source_indices?.[index] ?? index);
     $('recon-ts-angle').textContent=`${index+1} / ${refined.angles.length} · ${angle(refined.angles[index])}`;
     const image=$('tilt-plane-image');image.style.visibility='visible';
     requestViewerImage(image,'/api/reconstruction-tilt-plane?'+new URLSearchParams({project_id:state.project.id,series_id:state.selected,index,revision:refined.revision,...(state.ctfView?{mode:state.ctfView}:{})}));
@@ -192,6 +197,7 @@ function showReconstructionTS(){
   if(!slider.dataset.initialized){slider.value=job.angles.reduce((best,a,i)=>Math.abs(a)<Math.abs(job.angles[best])?i:best,0);slider.dataset.initialized='1';}
   $('tilt-slider').max=slider.max;$('tilt-slider').value=slider.value;showTiltPlane();
   $('recon-ts-angle').textContent=$('tilt-angle').textContent;
+  highlightReconstructionView(Number(slider.value));
   $('volume-title').textContent=selectedSeries().name+' · Preprocessed tilt series';
   $('volume-empty').hidden=true;
 }
@@ -199,7 +205,7 @@ function showReconstructionTS(){
 function reconstructionPanel(row) {
   const selected=state.project.reconstruction_denoisers ?? (reconstructionAssembly()?.mode==='advanced'?['tinycare']:[]);
   const alignment=state.project.reconstruction_alignment_options || {smoothness_strength:0,rescue_tilts:true};
-  return `<section class="reconstruct-step"><div class="reconstruction-root-actions"></div><div class="preprocessing-layout"><div class="reconstruction-viewer-column"><section class="panel tilt-viewer"><div class="panel-header"><span id="volume-title">${esc(row.name)} · Tomogram</span><span id="recon-status" class="badge pending">Checking output…</span></div><div class="tilt-image-area tomogram-area"><div id="volume-empty" class="viewer-empty">The tomogram will appear here after reconstruction.</div><img id="volume-image" hidden alt="Reconstructed tomogram slice"><div id="recon-ts-viewer" hidden><div id="tilt-image-area" class="tilt-image-area"><img id="tilt-plane-image" alt="Preprocessed tilt series"><div id="recon-ts-controls" class="orientation-controls"></div></div><input id="tilt-slider" type="range" hidden><span id="tilt-angle" hidden></span></div><div class="volume-variants volume-landmarks"><button id="recon-ts" type="button" class="button secondary" aria-pressed="false" disabled hidden>Tomogram</button><button type="button" class="button secondary" data-volume-method="landmarks" aria-pressed="false" title="Landmark projections from the latest available alignment pass" hidden>Landmarks</button></div><div class="volume-variants"><button type="button" class="button secondary" data-volume-method="tinycare" aria-pressed="false" title="Click again to return to the original volume" disabled>TinyCARE</button></div></div><div id="recon-ts-scroll" class="tilt-scroll" hidden><input id="recon-ts-slider" type="range" min="0" max="0" value="0" disabled aria-label="Tilt angle"><span id="recon-ts-angle"></span></div><div class="tilt-scroll"><select id="volume-axis" aria-label="Slice axis"><option value="z">Z</option><option value="y">Y</option><option value="x">X</option></select><input id="volume-slider" type="range" min="0" max="0" value="0" disabled aria-label="Tomogram slice"><span id="volume-slice">No tomogram</span></div><div id="recon-job-info" class="hint viewer-info"></div></section>${reconstructionAssembly()?.mode==='advanced'?'<details id="recon-angle-table" class="panel"><summary class="panel-header">Refined angles</summary><p class="hint">Available after geometry refinement.</p></details>'+landmarkCloudPanel():''}</div><form id="reconstruction-form" class="panel processing-parameters"><div id="recon-parameter-title" class="panel-header">Greco Optimizer</div><div class="reconstruction-details"><label class="metadata-field"><span>Tomogram thickness (%)</span><input id="recon-thickness" type="number" min="30" max="100" step="1" required value="${esc(state.project.reconstruction_thickness_percent ?? 50)}"></label><label class="metadata-field"><span>Final reconstruction binning</span><select id="recon-final-binning">${[1,2,4,8,16].map(bin=>`<option value="${bin}" ${bin===(state.project.reconstruction_final_binning ?? row.preprocessing?.output_binning ?? row.preprocessing?.options?.output_binning ?? 8)?'selected':''}>Bin ${bin}</option>`).join('')}</select></label><label class="metadata-field"><span>Smoothness</span><input id="recon-smoothness" type="number" min="0" max="5" step="0.05" required value="${esc(alignment.smoothness_strength)}"></label><label class="check-line"><span>Rescue tilts (optional)</span><input id="recon-rescue" type="checkbox" ${alignment.rescue_tilts?'checked':''}></label><p id="recon-normal-help" class="hint">Greco Optimizer aligns the tilt series.<br>Smoothness penalizes abrupt tilt-to-tilt shifts.<br>Rescue retries difficult tilts with a wider search.</p></div>${reconstructionAdvancedPanel()}${reconstructionFineScalePanel()}<div class="panel-header">Final tomogram denoising</div><div class="parameter-section"><div class="metadata-grid">${[['tinycare','TinyCARE']].map(([key,label])=>`<label class="check-line"><span>${label}</span><input type="checkbox" data-recon-denoiser="${key}" ${selected.includes(key)?'checked':''}></label>`).join('')}</div></div><p id="recon-error" class="form-error viewer-info" role="alert"></p><div class="submit-actions"><button type="submit" class="button primary" data-submit-recon="one">Submit</button><button type="submit" class="button secondary" data-submit-recon="all">Submit all</button></div></form></div>${processingStepPanels(row)}</section>`;
+  return `<section class="reconstruct-step"><div class="reconstruction-root-actions"></div><div class="preprocessing-layout"><div class="reconstruction-viewer-column"><section class="panel tilt-viewer"><div class="panel-header"><span id="volume-title">${esc(row.name)} · Tomogram</span><span id="recon-status" class="badge pending">Checking output…</span></div><div class="tilt-image-area tomogram-area"><div id="volume-empty" class="viewer-empty">The tomogram will appear here after reconstruction.</div><img id="volume-image" hidden alt="Reconstructed tomogram slice"><div id="recon-ts-viewer" hidden><div id="tilt-image-area" class="tilt-image-area"><img id="tilt-plane-image" alt="Preprocessed tilt series"><div id="recon-ts-controls" class="orientation-controls"></div></div><input id="tilt-slider" type="range" hidden><span id="tilt-angle" hidden></span></div><div class="volume-variants volume-landmarks"><button id="recon-ts" type="button" class="button secondary" aria-pressed="false" disabled hidden>Tomogram</button><button type="button" class="button secondary" data-volume-method="landmarks" aria-pressed="false" title="Landmark projections from the latest available alignment pass" hidden>Landmarks</button></div><div class="volume-variants"><button type="button" class="button secondary" data-volume-method="tinycare" aria-pressed="false" title="Click again to return to the original volume" disabled>TinyCARE</button></div></div><div id="recon-ts-scroll" class="tilt-scroll" hidden><input id="recon-ts-slider" type="range" min="0" max="0" value="0" disabled aria-label="Tilt angle"><span id="recon-ts-angle"></span></div><div id="recon-view-grid" class="curation-strip-scroll" hidden><div class="curation-tilts" role="group" aria-label="Included reconstruction views"></div></div><div class="tilt-scroll"><select id="volume-axis" aria-label="Slice axis"><option value="z">Z</option><option value="y">Y</option><option value="x">X</option></select><input id="volume-slider" type="range" min="0" max="0" value="0" disabled aria-label="Tomogram slice"><span id="volume-slice">No tomogram</span></div><div id="recon-job-info" class="hint viewer-info"></div></section>${reconstructionAssembly()?.mode==='advanced'?'<details id="recon-angle-table" class="panel"><summary class="panel-header">Refined angles</summary><p class="hint">Available after geometry refinement.</p></details>'+landmarkCloudPanel():''}</div><form id="reconstruction-form" class="panel processing-parameters"><div id="recon-parameter-title" class="panel-header">Greco Optimizer</div><div class="reconstruction-details"><label class="metadata-field"><span>Tomogram thickness (%)</span><input id="recon-thickness" type="number" min="30" max="100" step="1" required value="${esc(state.project.reconstruction_thickness_percent ?? 50)}"></label><label class="metadata-field"><span>Final reconstruction binning</span><select id="recon-final-binning">${[1,2,4,8,16].map(bin=>`<option value="${bin}" ${bin===(state.project.reconstruction_final_binning ?? row.preprocessing?.output_binning ?? row.preprocessing?.options?.output_binning ?? 8)?'selected':''}>Bin ${bin}</option>`).join('')}</select></label><label class="metadata-field"><span>Smoothness</span><input id="recon-smoothness" type="number" min="0" max="5" step="0.05" required value="${esc(alignment.smoothness_strength)}"></label><label class="check-line"><span>Rescue tilts (optional)</span><input id="recon-rescue" type="checkbox" ${alignment.rescue_tilts?'checked':''}></label><p id="recon-normal-help" class="hint">Greco Optimizer aligns the tilt series.<br>Smoothness penalizes abrupt tilt-to-tilt shifts.<br>Rescue retries difficult tilts with a wider search.</p></div>${reconstructionAdvancedPanel()}${reconstructionFineScalePanel()}<div class="panel-header">Final tomogram denoising</div><div class="parameter-section"><div class="metadata-grid">${[['tinycare','TinyCARE']].map(([key,label])=>`<label class="check-line"><span>${label}</span><input type="checkbox" data-recon-denoiser="${key}" ${selected.includes(key)?'checked':''}></label>`).join('')}</div></div><p id="recon-error" class="form-error viewer-info" role="alert"></p><div class="submit-actions"><button type="submit" class="button primary" data-submit-recon="one">Submit</button><button type="submit" class="button secondary" data-submit-recon="all">Submit all</button></div></form></div>${processingStepPanels(row)}</section>`;
 }
 async function pollReconstruction(projectId,seriesId) {
   const reconstructionId=state.project?.active_reconstruction_assembly;
@@ -208,12 +214,18 @@ async function pollReconstruction(projectId,seriesId) {
     if(state.project?.id!==projectId||state.selected!==seriesId||state.stage!=='reconstruction'||state.project?.active_reconstruction_assembly!==reconstructionId||!$('volume-image'))return;
     job.volumes=Object.fromEntries(Object.entries(job.volumes || {}).filter(([key])=>['original','tinycare'].includes(key)));
     state.reconstructionStatus=job;selectedSeries().reconstruction=job;renderStages();
+    renderReconstructionViewGrid();
     if($('recon-status')){
       $('recon-status').textContent=reconstructionStateLabel(job);
       $('recon-status').className='badge '+(job.state==='completed'?'':'pending');
       bindPreprocessingActions(job,'reconstruction','recon-status');
     }
-    $('recon-job-info').textContent=[job.job_id?'Slurm job '+job.job_id:'','Greco Optimizer',job.alignment_options?`Smoothness ${job.alignment_options.smoothness_strength} · Rescue ${job.alignment_options.rescue_tilts?'±16 px':'off'}`:'',job.active_count?`${job.active_count}/${job.total_tilts} tilts`:'',job.final_binning?`Final bin ${job.final_binning}`:'',job.work || '',job.error || job.status_error || job.warning || '',...Object.entries(job.denoising_errors || {}).map(([m,e])=>m+': '+e)].filter(Boolean).join(' · ');
+    $('recon-job-info').textContent=[job.job_id?'Slurm job '+job.job_id:'','Greco Optimizer',job.alignment_options?`Smoothness ${job.alignment_options.smoothness_strength} · Rescue ${job.alignment_options.rescue_tilts?'±16 px':'off'}`:'',job.active_count?`${job.active_count}/${job.total_tilts} tilts`:'',job.final_binning?`Final bin ${job.final_binning}`:'',job.work || '',job.error || job.status_error || '',...Object.entries(job.denoising_errors || {}).map(([m,e])=>m+': '+e)].filter(Boolean).join(' · ');
+    if(job.warning){
+      const warning=document.createElement('div');warning.className='reconstruction-warning';
+      const label=document.createElement('strong');label.textContent='Warning: ';
+      warning.append(label,document.createTextNode(job.warning));$('recon-job-info').append(warning);
+    }
     renderReconstructionAngles(job);
     loadReconstructionLandmarks(job);
     showVolumePlane();
@@ -293,6 +305,7 @@ function showVolumePlane() {
 }
 
 async function submitReconstruction(event) {
+  if(state.reconstructionViewsSaving){event.preventDefault();notify('Wait for the view selection to be saved.');return;}
   event.preventDefault();
   const all=event.submitter.dataset.submitRecon==='all';
   const ids=all?submittableSeries('reconstruction'):[state.selected];
@@ -326,11 +339,11 @@ function mountReconstructionAssemblies(){
   const create=document.createElement('button');create.className='button primary';create.textContent='+ New reconstruction';heading.append(create);
   create.onclick=()=>{
     const dialog=document.createElement('dialog');dialog.className='assembly-job-dialog reconstruction-create-dialog';
-    dialog.innerHTML=`<form><h3>New reconstruction</h3><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Reconstruction ${String((project.reconstruction_assemblies || []).length+1).padStart(3,'0')}"></label><fieldset class="reconstruction-mode-choice"><legend>Mode</legend>${[['standard','Simple','Aligns image shifts with a fixed tilt axis angle β. Set the correct axis angle in preprocessing.'],['advanced','Advanced','Angular refinement and final CTF re-estimation. Tolerates an imprecise initial β and allows defocus handedness to be adjusted after preprocessing.']].map(([value,label,description])=>`<label><input type="radio" name="mode" value="${value}" ${value==='standard'?'checked':''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Accept</button></div></form>`;
+    dialog.innerHTML=`<form><h3>New reconstruction</h3><label class="metadata-field"><span>Name</span><input name="name" required maxlength="100" value="Reconstruction ${String((project.reconstruction_assemblies || []).length+1).padStart(3,'0')}"></label><label class="metadata-field"><span>Preprocessing</span><select name="preprocessing" required>${(project.preprocessing_assemblies || []).map(p=>`<option value="${esc(p.id)}" ${p.id===project.active_preprocessing_assembly?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><fieldset class="reconstruction-mode-choice"><legend>Mode</legend>${[['standard','Simple','Aligns image shifts with a fixed tilt axis angle β. Set the correct axis angle in preprocessing.'],['advanced','Advanced','Angular refinement and final CTF re-estimation. Tolerates an imprecise initial β and allows defocus handedness to be adjusted after preprocessing.']].map(([value,label,description])=>`<label><input type="radio" name="mode" value="${value}" ${value==='standard'?'checked':''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</fieldset><p class="form-error"></p><div class="submit-actions"><button type="button" class="button secondary">Cancel</button><button type="submit" class="button primary">Accept</button></div></form>`;
     document.body.append(dialog);dialog.onclose=()=>dialog.remove();dialog.querySelector('[type=button]').onclick=()=>dialog.close();
     dialog.querySelector('form').onsubmit=async event=>{
       event.preventDefault();event.submitter.disabled=true;
-      try{const result=await api('/api/reconstruction-assemblies',{project_id:project.id,name:dialog.querySelector('[name=name]').value,mode:dialog.querySelector('[name=mode]:checked').value});dialog.close();if(state.project?.id===project.id)saveProject(result);}
+      try{const result=await api('/api/reconstruction-assemblies',{project_id:project.id,name:dialog.querySelector('[name=name]').value,preprocessing_id:dialog.querySelector('[name=preprocessing]').value,mode:dialog.querySelector('[name=mode]:checked').value});dialog.close();if(state.project?.id===project.id)saveProject(result);}
       catch(error){dialog.querySelector('.form-error').textContent=error.message;event.submitter.disabled=false;}
     };dialog.showModal();
   };
@@ -339,6 +352,9 @@ function mountReconstructionAssemblies(){
   for(const record of project.reconstruction_assemblies || []){
     const panel=document.createElement('details');panel.className='pick-assembly';panel.dataset.reconstructionId=record.id;panel.innerHTML=`<summary><strong>${esc(record.name)}</strong>${record.mode==='advanced'?'<span class="reconstruction-mode-badge active">Advanced</span>':''}<button type="button" class="button secondary assembly-delete-button" data-delete-reconstruction="${esc(record.id)}">Delete</button></summary>`;
     panel.querySelector('[data-delete-reconstruction]').onclick=event=>{event.preventDefault();event.stopPropagation();confirmReconstructionAssemblyDeletion(record);};
+    const source=document.createElement('span');source.className='hint reconstruction-preprocessing-source';
+    source.textContent=(project.preprocessing_assemblies || []).find(p=>p.id===record.preprocessing_assembly_id)?.name || 'Preprocessing';
+    panel.querySelector('summary').insertBefore(source,panel.querySelector('[data-delete-reconstruction]'));
     if(record.id===project.active_reconstruction_assembly && content){panel.open=state.reconstructionCollapsed!==project.id+':'+record.id;const body=document.createElement('div');body.className='assembly-body';body.append(content);panel.append(body);}
     panel.addEventListener('toggle',async()=>{if(!panel.isConnected)return;if(record.id===state.project.active_reconstruction_assembly){state.reconstructionCollapsed=panel.open?null:project.id+':'+record.id;return;}if(!panel.open)return;try{const result=await api('/api/select-reconstruction-assembly',{project_id:project.id,assembly_id:record.id});if(state.project?.id===project.id)saveProject(result);}catch(error){panel.open=false;notify(error.message);}});
     list.append(panel);
@@ -390,4 +406,51 @@ function prefetchReconstructionImage(url){
   state.reconstructionPrefetchTimer=setTimeout(()=>{
     if(state.stage==='reconstruction' && $('recon-ts')?.checked && target?.isConnected)requestViewerImage(target,url);
   },120);
+}
+
+function reconstructionViewsEditable(){
+  const row=selectedSeries();
+  return reconstructionAssembly()?.mode==='advanced' && !row?.reconstruction_views_locked && !row?.reconstruction?.work && !row?.reconstruction?.job_id && !row?.queued_jobs?.reconstruction;
+}
+function renderReconstructionViewGrid(){
+  const holder=$('recon-view-grid'),toggle=$('recon-ts'),row=selectedSeries();
+  if(!holder || !toggle || !row)return;
+  const editable=reconstructionViewsEditable(),angles=state.reconstructionTSStatus?.angles || [];
+  toggle.textContent=editable?'Exclude views':toggle.checked?'Tilt series':'Tomogram';
+  holder.hidden=!toggle.checked || !angles.length;
+  const grid=holder.firstElementChild,excluded=new Set(row.excluded_reconstruction_views || []);
+  const active=state.reconstructionStatus?.tilt_series?.source_indices;
+  const key=JSON.stringify([state.project.active_reconstruction_assembly,row.id,angles,editable,[...excluded],active]);
+  if(grid.dataset.viewsKey!==key){
+    grid.dataset.viewsKey=key;grid.style.setProperty('--curation-tilt-count',angles.length);grid.replaceChildren();
+    angles.forEach((value,index)=>{
+      const included=!excluded.has(index) && (!active || active.includes(index));
+      const button=document.createElement('button');button.type='button';button.className='curation-tilt '+(included?'green':'gray');button.textContent=String(index+1);button.dataset.viewIndex=index;
+      button.title='Tilt '+(index+1)+' · '+angle(value)+' · '+(included?'Included':'Excluded')+(editable?' · Double-click to toggle':'');button.setAttribute('aria-pressed',String(included));
+      button.onclick=()=>{
+        const refined=state.reconstructionStatus?.tilt_series;
+        const target=refined?.source_indices?refined.source_indices.indexOf(index):index;
+        if(target<0)return;
+        $('recon-ts-slider').value=target;showReconstructionTS();
+      };
+      button.ondblclick=async event=>{
+        event.preventDefault();
+        if(!reconstructionViewsEditable())return;
+        const pid=state.project.id,sid=row.id,rid=state.project.active_reconstruction_assembly;const next=new Set(row.excluded_reconstruction_views || []);if(next.has(index))next.delete(index);else next.add(index);
+        state.reconstructionViewsSaving=true;grid.querySelectorAll('button').forEach(b=>b.disabled=true);document.querySelectorAll('[data-submit-recon]').forEach(b=>b.disabled=true);
+        try{const result=await api('/api/reconstruction-views',{project_id:pid,series_id:sid,excluded_views:[...next].sort((a,b)=>a-b)});if(state.project?.id===pid && state.selected===sid && state.project.active_reconstruction_assembly===rid)row.excluded_reconstruction_views=result.excluded_views;}
+        catch(error){notify(error.message);}
+        finally{state.reconstructionViewsSaving=false;if(state.project?.id===pid && state.selected===sid && state.project.active_reconstruction_assembly===rid){grid.dataset.viewsKey='';renderReconstructionViewGrid();document.querySelectorAll('[data-submit-recon]').forEach(b=>b.disabled=false);}}
+      };grid.append(button);
+    });
+  }
+}
+
+function highlightReconstructionView(sourceIndex){
+  const grid=$('recon-view-grid');if(!grid)return;
+  grid.querySelectorAll('[data-view-index]').forEach(button=>{
+    const active=Number(button.dataset.viewIndex)===sourceIndex;
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','true');else button.removeAttribute('aria-current');
+  });
 }

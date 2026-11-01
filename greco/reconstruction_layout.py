@@ -51,20 +51,6 @@ def enabled(path):
     return project_root(path) is not None
 
 
-def organize_engine_output(work):
-    """The pinned engine writes its historic names; publish them before export."""
-    from .project_layout import job_work
-    work=job_work(work)
-    if not enabled(work):return
-    for path in sorted((work/'alignment').iterdir()):
-        from .project_layout import join
-        target=join(work,*path.relative_to(work).parts)
-        if target==path:continue
-        target.parent.mkdir(parents=True,exist_ok=True)
-        if target.exists():raise ValueError('Reconstruction destination already exists: '+str(target))
-        path.rename(target)
-
-
 def checkpoint_active(state):
     """Old rigid checkpoints imply the full range; Progressive alignment always stores selection."""
     import numpy as np
