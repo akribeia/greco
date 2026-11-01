@@ -1,4 +1,4 @@
-# Greco
+# Greco 1.1
 
 Greco processes electron cryotomography (cryo-ET) movies into tomograms and
 subtomogram averages. Its web interface manages GPU processing jobs through
@@ -211,6 +211,20 @@ The concern goes beyond the explanation given for one rejection. Who assesses su
 Independence requires more than operating outside traditional journals. The scientific community should question how much control over the circulation of research it delegates to platforms when the process behind their decisions remains unclear.
 
 If you found **GRECO**, **Greco** or **greco** useful, please consider sharing your next preprint elsewhere.
+
+## How to cite
+
+Thanks to Zenodo for providing an open platform to share this work.
+
+[Read the manuscript on Zenodo](https://doi.org/10.5281/zenodo.23871074).
+
+If you use Greco, please cite:
+
+```text
+Carlos Fernández Rodríguez. (2026).
+GRECO: Geometric Registration of Electron Cryotomography Observations.
+Zenodo. https://doi.org/10.5281/zenodo.23871074
+```
 
 ## License
 
