@@ -104,6 +104,8 @@ Stopping the server leaves submitted Slurm jobs running.
 > permissions. Project-file privacy depends on the permissions of the project
 > folders; sharing the installation does not change those permissions.
 
+![Greco landmark registration — animated preview](media/landmarks_preview.gif)
+
 ## Slurm template
 
 Open **Slurm template** in the web interface, paste this example and save it:
