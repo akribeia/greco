@@ -270,7 +270,7 @@ function renderSegmentation(){
     return sourceCache.get(cacheKey);
   };
   renderStages();
-  $('workspace').innerHTML=`<div class="page-heading"><div><span class="eyebrow">05 / SEGMENTATION</span><h1>Segmentation</h1><p>Independent volumes and downstream segmentation steps.</p></div><button class="button primary" id="new-segmentation">＋ New segmentation</button></div>`+
+  $('workspace').innerHTML=`<div class="page-heading">${workflowStageHeading('segmentation')}<button class="button primary" id="new-segmentation">＋ New segmentation</button></div>`+
     (records.length?'<div class="pick-assemblies segmentation-assemblies">'+records.map(record=>{
       return segmentationWorkspaceHtml(record,opened,staSources);
     }).join('')+'</div>':'<section class="panel empty-state"><h3>No segmentations yet</h3><p>Create a workspace and choose the tomograms and binning.</p></section>');

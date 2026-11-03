@@ -281,6 +281,8 @@ function showVolumePlane() {
   const index=state.volumeIndex==null?middle:Math.max(0,Math.min(size-1,state.volumeIndex));
   const slider=$('volume-slider');
   state.volumeIndex=index;slider.disabled=false;slider.max=size-1;slider.value=index;
+  renderReconstructionViewGrid();
+  if(landmarks)highlightReconstructionView(preview.tilt_numbers[index]-1);
   slider.setAttribute('aria-label',landmarks?'Landmark tilt':'Tomogram slice');
   $('volume-slice').textContent=landmarks?`${index+1} / ${size} · ${angle(preview.angles[index])}`:`${axis.toUpperCase()} · ${index+1} / ${size}`;
   $('volume-slice').title=landmarks?`Tilt ${preview.tilt_numbers[index]} · ${preview.stage}`:'';
@@ -418,6 +420,8 @@ function renderReconstructionViewGrid(){
   const editable=reconstructionViewsEditable(),angles=state.reconstructionTSStatus?.angles || [];
   toggle.textContent=editable?'Exclude views':toggle.checked?'Tilt series':'Tomogram';
   holder.hidden=!toggle.checked || !angles.length;
+  const sliderRow=state.volumeMethod==='landmarks'?$('volume-slider')?.closest('.tilt-scroll'):$('recon-ts-scroll');
+  if(sliderRow && sliderRow.nextElementSibling!==holder)sliderRow.after(holder);
   const grid=holder.firstElementChild,excluded=new Set(row.excluded_reconstruction_views || []);
   const active=state.reconstructionStatus?.tilt_series?.source_indices;
   const key=JSON.stringify([state.project.active_reconstruction_assembly,row.id,angles,editable,[...excluded],active]);
@@ -428,6 +432,11 @@ function renderReconstructionViewGrid(){
       const button=document.createElement('button');button.type='button';button.className='curation-tilt '+(included?'green':'gray');button.textContent=String(index+1);button.dataset.viewIndex=index;
       button.title='Tilt '+(index+1)+' · '+angle(value)+' · '+(included?'Included':'Excluded')+(editable?' · Double-click to toggle':'');button.setAttribute('aria-pressed',String(included));
       button.onclick=()=>{
+        if(state.volumeMethod==='landmarks'){
+          const target=(state.reconstructionStatus?.landmarks?.tilt_numbers || []).indexOf(index+1);
+          if(target<0)return;
+          state.volumeIndex=target;showVolumePlane();return;
+        }
         const refined=state.reconstructionStatus?.tilt_series;
         const target=refined?.source_indices?refined.source_indices.indexOf(index):index;
         if(target<0)return;

@@ -120,13 +120,13 @@ function renderPicking() {
   const project=state.project;
   const assembly=(project.pick_assemblies || []).find(a=>a.id===project.active_pick_assembly);
   if(assembly?.reconstruction_assembly_id && assembly.reconstruction_assembly_id!==project.active_reconstruction_assembly){
-    $('workspace').innerHTML='<div class="page-heading"><h1>Picking</h1></div><p>Loading reconstruction…</p>';
+    $('workspace').innerHTML=`<div class="page-heading">${workflowStageHeading('picking')}</div><p>Loading reconstruction…</p>`;
     api('/api/select-pick-assembly',{project_id:project.id,assembly_id:assembly.id}).then(result=>{if(state.project?.id===project.id)saveProject(result);}).catch(error=>notify(error.message));return;
   }
   const context=project.id+':'+(project.active_pick_assembly || '');
   if(state.pickerProject!==context){state.pickerDrafts ??= {};if(state.pickerProject)state.pickerDrafts[state.pickerProject]=state.pickerDraft;state.pickerProject=context;state.pickerDraft=state.pickerDrafts[context] || null;}
   if(!project.active_pick_assembly){
-    $('workspace').innerHTML='<div class="page-heading"><div><h1>Picking</h1><p>Create independent picking experiments with their own template and mask.</p></div></div><section class="panel empty-state"><h3>No pick assemblies yet</h3></section>';
+    $('workspace').innerHTML=`<div class="page-heading">${workflowStageHeading('picking')}</div><section class="panel empty-state"><h3>No pick assemblies yet</h3></section>`;
     bindPickAssemblies();return;
   }
   const template=project.picker_template;
@@ -136,7 +136,7 @@ function renderPicking() {
   const fields=[['template_pixel_size_A','Template pixel size (Å)'],['particle_diameter_A','Particle diameter (Å)'],
     ['angular_search_deg','Angular sampling (°)'],['max_particles','Max particles'],['candidate_count','Candidate pool'],
     ['high_pass_A','High-pass (Å)'],['low_pass_A','Low-pass (Å)'],['threshold_factor','Threshold factor']];
-  $('workspace').innerHTML=`<div class="page-heading"><div><span class="eyebrow">03 / PARTICLES</span><h1>Picking</h1><p>Greco Picker · GPU template matching on the original reconstructed tomograms.</p></div></div>
+  $('workspace').innerHTML=`<div class="page-heading">${workflowStageHeading('picking')}</div>
     <div class="picking-layout"><div class="picker-main"><section class="panel tilt-viewer">
     <div class="panel-header"><span id="picker-viewer-title">Tomogram · picks</span><span id="picker-viewer-count" class="badge"></span></div>
     <div class="tilt-image-area tomogram-area" id="picker-image-area">

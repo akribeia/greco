@@ -1,5 +1,18 @@
 "use strict";
 
+function workflowStageHeading(stage) {
+  const headings={
+    tilts:['01','Tilt series','Import your data and review acquisition metadata.'],
+    preprocessing:['02','Preprocessing','Select a tilt series in the left sidebar.'],
+    reconstruction:['03','Reconstruction','Select a tilt series in the left sidebar.'],
+    picking:['04','Picking','Greco Picker · GPU template matching on the original reconstructed tomograms.'],
+    sta:['05','STA','Organize picked particles into independent particle assemblies.','Subtomogram averaging'],
+    segmentation:['06','Segmentation','Independent volumes and downstream segmentation steps.']
+  };
+  const [number,title,description,eyebrow=title]=headings[stage];
+  return `<div><span class="eyebrow">${number} / ${eyebrow.toUpperCase()}</span><div class="reconstruction-heading"><h1>${title}</h1></div><p>${description}</p></div>`;
+}
+
 function stageStatus(stage) {
   const rows=(state.project?.series || []).filter(row=>row.enabled!==false);
   if(stage.id==='tilts')return {complete:stage.complete,label:stage.complete?'Import complete':'Data import'};
@@ -108,7 +121,7 @@ function renderTilts(series) {
   const tilts=series.reduce((n,s)=>n+s.expected,0);
   const metadata=state.project?.metadata || {};
   const metadataItems=[["Voltage","voltage_kv","kV"],["Cs","cs_mm","mm"],["Tilt axis","tilt_axis_deg","°"],["Pixel size","pixel_size_A","Å / pixel"],["Dose","dose_per_tilt","e⁻ / Å²"]];
-  $("workspace").innerHTML=`<div class="page-heading"><div><span class="eyebrow">01 / ACQUISITION</span><h1>Tilt series</h1><p>Import your data and review acquisition metadata.</p></div><div class="action-group"><button class="button secondary" data-edit="project" ${!state.project?'disabled':''}>Project metadata</button><button class="button primary" data-action="import" ${!state.project?'disabled':''}>＋ Import tilt series</button></div></div>
+  $("workspace").innerHTML=`<div class="page-heading">${workflowStageHeading('tilts')}<div class="action-group"><button class="button secondary" data-edit="project" ${!state.project?'disabled':''}>Project metadata</button><button class="button primary" data-action="import" ${!state.project?'disabled':''}>＋ Import tilt series</button></div></div>
   <div class="stats" aria-label="Import summary"><div class="stat"><span class="stat-label">TILT SERIES</span><span class="stat-value">${series.length}</span></div><div class="stat"><span class="stat-label">MATCHED TILTS</span><span class="stat-value">${tilts}</span></div><div class="stat"><span class="stat-label">IMPORT STATUS</span><span class="badge ${series.length?'':'pending'}">${series.length?'Complete':'Pending'}</span></div>
   <div class="project-metadata-strip" aria-label="Project metadata">${metadataItems.map(([label,key,unit])=>`<span>${label}<strong>${metadata[key]===null || metadata[key]===undefined ? '—' : esc(metadata[key])+' '+unit}</strong></span>`).join('')}</div></div>
 <section class="panel"><div class="panel-header project-tilt-table-header"><span>Project tilt series</span><div class="project-tilt-table-controls"><small>${series.length} tilt series · original binning</small>${projectPickAssemblySelector()}</div></div>${series.length ? `<div class="table-wrap"><table><thead><tr><th>TILT SERIES</th><th>TILTS</th><th>DEGREES</th><th>PREPROCESSING</th><th>RECONSTRUCTION</th><th>PICKS</th></tr></thead><tbody>${series.map(row=>`<tr class="${row.id===state.selected?'selected':''}"><td><button class="table-id" data-select="${row.id}">${esc(row.name)}<small></small></button></td><td>${row.found}<span class="muted"> / ${row.expected}</span></td><td>${angle(row.angle_min)} <span class="muted">→</span> ${angle(row.angle_max)}</td><td><span class="badge ${row.preprocessing?.state==='completed'?'':'pending'}">${jobStateLabel(row.preprocessing?.state)}</span></td><td><span class="badge ${row.reconstruction?.state==='completed'?'':'pending'}">${reconstructionStateLabel(row.reconstruction)}</span> ${queuedRefinementLabels(row)}</td><td>${(row.picking && row.picking.state!=='completed')?`<span class="badge pending">${jobStateLabel(row.picking?.state)}</span>`:esc(row.picking?.pick_count ?? row.pick_count ?? 0)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state"><div class="empty-symbol">▤</div><h3>Your first tilt series starts here</h3><p>Select your mdocs and TIFF, EER or MRC files. Greco will match the files and ask you for missing metadata.</p><button class="button secondary" data-action="${state.project?'import':'project'}">${state.project?'Select files':'Choose a project folder'} →</button></div>`}</section>
