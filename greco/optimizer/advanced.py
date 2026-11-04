@@ -38,7 +38,7 @@ def run(original,angles,output,*,options,frozen_shifts_yx,axis_deg,voxel,
     import cupy as cp
     options=checked_resolved(options)
     if not options['advanced_mode']:raise ValueError('Advanced-mode runner requires Advanced mode')
-    if smoothness and any(options[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')):raise ValueError('Smoothness must be zero for angular refinement')
+    if smoothness and any(options[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles','refine_gamma')):raise ValueError('Smoothness must be zero for angular refinement')
     output=Path(output)
     if (storage_path(output, 'config.json')).exists() or (storage_path(output, 'final_state.npz')).exists():
         raise ValueError('Advanced alignment output already contains a run.')

@@ -295,8 +295,8 @@ class ProjectService:
             data = read_json(self, file)
             if data.get("version") != 1 or not isinstance(data.get("series"), list):
                 raise InputError("Unsupported project version.")
-            if data.get('layout_version') not in (2,3) or data.get('preprocessing_layout_version') not in (2,3) or data.get('reconstruction_layout_version') not in (2,3):
-                raise InputError('This project must use the definitive Greco layout.')
+            if any(data.get(key) != 3 for key in ('layout_version', 'preprocessing_layout_version', 'reconstruction_layout_version')):
+                raise InputError('Unsupported project layout.')
         else:
             data = dict(version=1, layout_version=3, preprocessing_layout_version=3, preprocessing_assemblies=[], reconstruction_layout_version=3, segmentation_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
         if self.slurm_store is not None:

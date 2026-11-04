@@ -39,7 +39,7 @@ function restoreReconstructionView(row) {
   }
 }
 
-const reconstructionAdvancedFields=[['refine_common_axis','Refine β · common tilt axis'],['refine_per_view_axis','Refine β · per view'],['refine_tilt_angles','Refine α · tilt angles']];
+const reconstructionAdvancedFields=[['refine_common_axis','Refine β · common tilt axis'],['refine_per_view_axis','Refine β · per view'],['refine_tilt_angles','Refine α · tilt angles'],['refine_gamma','Refine γ (experimental)']];
 function reconstructionAdvancedDraft() {
   if(state.reconstructionAdvancedProject!==state.project.id+':'+(state.project.active_reconstruction_assembly || '')){
     state.reconstructionAdvancedProject=state.project.id+':'+(state.project.active_reconstruction_assembly || '');
@@ -51,14 +51,14 @@ function reconstructionAdvancedDraft() {
 function reconstructionAdvancedPanel() {
   const options=reconstructionAdvancedDraft();
   const hand=options.defocus_handedness ?? state.project.orientation?.df_hand ?? state.project.preprocessing_options?.df_hand ?? 1;
-  return `<div id="recon-advanced-options" class="parameter-section" hidden><div class="metadata-grid">${reconstructionAdvancedFields.map(([key,label])=>`<label class="check-line"><span>${label}</span><input type="checkbox" data-recon-advanced="${key}" ${options[key]?'checked':''}></label>`).join('')}<div class="metadata-field"><label for="recon-df-hand">Defocus handedness</label><select id="recon-df-hand">${[-1,1].map(value=>`<option value="${value}" ${Number(hand)===value?'selected':''}>${value}</option>`).join('')}</select></div><label class="check-line"><span>Flip tomogram Z</span><input id="recon-flip-z" type="checkbox" ${options.flip_tomogram_z?'checked':''}></label></div><p class="hint">CTF is re-estimated with the final geometry in Advanced mode.<br>Check defocus handedness using the TS defocus view before submitting all.<br>Flip tomogram Z rotates the tilt series by 180°.</p>${defocusHandHelp()}</div>`;
+  return `<div id="recon-advanced-options" class="parameter-section" hidden><div class="metadata-grid">${reconstructionAdvancedFields.map(([key,label])=>`<label class="check-line"><span>${label}</span><input type="checkbox" data-recon-advanced="${key}" ${key==='refine_gamma'?'title="Final individual camera refinement · fixed landmarks · minimum total change"':''} ${options[key]?'checked':''}></label>`).join('')}<div class="metadata-field"><label for="recon-df-hand">Defocus handedness</label><select id="recon-df-hand">${[-1,1].map(value=>`<option value="${value}" ${Number(hand)===value?'selected':''}>${value}</option>`).join('')}</select></div><label class="check-line"><span>Flip tomogram Z</span><input id="recon-flip-z" type="checkbox" ${options.flip_tomogram_z?'checked':''}></label></div><p class="hint">CTF is re-estimated with the final geometry in Advanced mode.<br>Check defocus handedness using the TS defocus view before submitting all.<br>Flip tomogram Z rotates the tilt series by 180°.</p>${defocusHandHelp()}</div>`;
 }
 function reconstructionFineScalePanel(){
   const options=reconstructionAdvancedDraft();
   return `<div id="recon-fine-scale-options" class="parameter-section" hidden><label class="check-line"><span>Fine-scale refinement</span><input id="recon-fine-scale" type="checkbox" ${options.fine_scale_refinement?'checked':''}></label><div id="recon-fine-scale-fields" class="fine-scale-controls"><label class="fine-scale-field"><span>Binning</span><select id="recon-fine-binning">${[4,2,1].map(bin=>`<option value="${bin}" ${bin===(options.fine_scale_binning ?? 4)?'selected':''}>Bin ${bin}</option>`).join('')}</select></label><label class="fine-scale-field"><span>Passes</span><input id="recon-fine-rounds" type="number" min="1" max="20" step="1" value="${options.fine_scale_rounds ?? 5}"></label></div><small class="recon-fine-help">Same landmarks and refinement settings. CTF is re-estimated before and after.<br><strong>Warning:</strong> This can be slow and is not required to reconstruct at bin 4, bin 2 or bin 1.</small></div><div id="recon-leveling-options" class="parameter-section" hidden><label class="check-line"><span>Tomogram leveling</span><input id="recon-leveling" type="checkbox" ${options.tomogram_leveling?'checked':''}></label><small class="recon-fine-help">Fits a reference plane to the reconstructed landmark positions and applies a rigid 3D rotation to level the tomogram.</small></div>`;
 }
 function reconstructionAdvancedSelection() {
-  return {enabled:!!reconstructionAdvancedDraft().enabled,...Object.fromEntries(reconstructionAdvancedFields.map(([key])=>[key,document.querySelector(`[data-recon-advanced="${key}"]`).checked])),defocus_handedness:Number($('recon-df-hand').value),flip_tomogram_z:$('recon-flip-z').checked,tomogram_leveling:!!$('recon-leveling')?.checked,fine_scale_refinement:!!$('recon-fine-scale')?.checked,fine_scale_binning:Number($('recon-fine-binning')?.value ?? 4),fine_scale_rounds:Number($('recon-fine-rounds')?.value ?? 5)};
+  return {enabled:!!reconstructionAdvancedDraft().enabled,...Object.fromEntries(reconstructionAdvancedFields.filter(([key])=>key!=='refine_gamma' || document.querySelector(`[data-recon-advanced="${key}"]`).checked).map(([key])=>[key,document.querySelector(`[data-recon-advanced="${key}"]`).checked])),defocus_handedness:Number($('recon-df-hand').value),flip_tomogram_z:$('recon-flip-z').checked,tomogram_leveling:!!$('recon-leveling')?.checked,fine_scale_refinement:!!$('recon-fine-scale')?.checked,fine_scale_binning:Number($('recon-fine-binning')?.value ?? 4),fine_scale_rounds:Number($('recon-fine-rounds')?.value ?? 5)};
 }
 function mountReconstructionAdvanced() {
   const smoothness=$('recon-smoothness');
@@ -325,7 +325,8 @@ async function submitReconstruction(event) {
       let capabilities;
       try {capabilities=await api('/api/reconstruction-capabilities');}
       catch(error) {throw new Error('Restart the Greco web server and reload this page to enable the Greco Optimizer. No job was submitted.');}
-      if(advanced.enabled && !capabilities.advanced_reconstruction)throw new Error('Restart the Greco web server to enable Fast mode.');
+      if(advanced.enabled && !capabilities.advanced_reconstruction)throw new Error('Restart the Greco web server to enable Advanced reconstruction.');
+      if(advanced.refine_gamma && !capabilities.experimental_gamma_refinement)throw new Error('Restart the Greco web server and reload this page to enable experimental γ refinement.');
       if(!capabilities.final_binning || !capabilities.integrated_smoothness || capabilities.optimizer!==optimizer || capabilities.optimizer_version!==1)
         throw new Error('The server does not support the Greco Optimizer. Restart it and reload this page. No job was submitted.');
     }
@@ -383,8 +384,9 @@ function confirmReconstructionAssemblyDeletion(record){
 function renderReconstructionAngles(job){
   const panel=$('recon-angle-table');if(!panel)return;
   const rows=(job.refined_angles || []).filter(row=>row && Number.isFinite(row.alpha_nominal) && Number.isFinite(row.alpha_refined) && Number.isFinite(row.beta_refined));
+  const showGamma=rows.some(row=>Number.isFinite(row.gamma_refined));
   panel.innerHTML='<summary class="panel-header"><span>Refined angles</span><span class="reconstruction-angle-count">'+(rows.length?rows.filter(row=>row.included).length+' / '+rows.length+' tilts':'')+'</span></summary>'+(rows.length?
-    '<div class="reconstruction-angle-grid"><table class="reconstruction-angle-table"><thead><tr><th scope="col">Tilt</th><th scope="col"><strong>α</strong> nominal (°)</th><th scope="col"><strong>α</strong> refined (°)</th><th scope="col"><strong>β</strong> refined (°)</th></tr></thead><tbody>'+rows.map(row=>`<tr${row.included?'':' class="angle-excluded"'}><td>${row.tilt}${row.included?'':'<span class="angle-excluded-label">Excluded</span>'}</td><td>${row.alpha_nominal.toFixed(2)}</td><td>${row.included?row.alpha_refined.toFixed(2):'—'}</td><td>${row.included?row.beta_refined.toFixed(2):'—'}</td></tr>`).join('')+'</tbody></table></div>':
+    '<div class="reconstruction-angle-grid"><table class="reconstruction-angle-table"><thead><tr><th scope="col">Tilt</th><th scope="col"><strong>α</strong> nominal (°)</th><th scope="col"><strong>α</strong> refined (°)</th><th scope="col"><strong>β</strong> refined (°)</th>'+(showGamma?'<th scope="col"><strong>γ</strong> refined (°)</th>':'')+'</tr></thead><tbody>'+rows.map(row=>`<tr${row.included?'':' class="angle-excluded"'}><td>${row.tilt}${row.included?'':'<span class="angle-excluded-label">Excluded</span>'}</td><td>${row.alpha_nominal.toFixed(2)}</td><td>${row.included?row.alpha_refined.toFixed(2):'—'}</td><td>${row.included?row.beta_refined.toFixed(2):'—'}</td>${showGamma?`<td>${row.included && Number.isFinite(row.gamma_refined)?row.gamma_refined.toFixed(3):'—'}</td>`:''}</tr>`).join('')+'</tbody></table></div>':
     '<p class="hint">Available after geometry refinement.</p>');
 }
 

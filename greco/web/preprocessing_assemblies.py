@@ -49,7 +49,6 @@ def create(service,project_id,name):
     if not isinstance(name,str) or not 1<=len(name.strip())<=100:raise InputError('Enter a preprocessing name (1–100 characters).')
     with service.lock:
         root=service._root(project_id);data=service._read(root);capture(data)
-        if data.get('preprocessing_layout_version')!=3:raise InputError('This project is waiting for preprocessing layout migration.')
         if any(r['name'].casefold()==name.strip().casefold() for r in data.get('preprocessing_assemblies',[])):raise InputError('A preprocessing already has this name.')
         record=dict(id=uuid.uuid4().hex[:8],name=name.strip(),series={})
         for key in SETTINGS:

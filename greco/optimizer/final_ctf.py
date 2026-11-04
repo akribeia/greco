@@ -19,7 +19,7 @@ def reestimate(data, alignment):
         try:cached=json.loads(target.read_text())
         except (ValueError,OSError):cached={}
         if cached.get('source_signature')==signature:return cached
-    from ..alignment_geometry import resolve
+    from ..alignment_geometry import defocus_geometry
     from ..ctf_estimator import TiltCTF
     from ..ctf_local_refinement import refine_local_series
     from .flat_ctf import fit_flat
@@ -30,10 +30,9 @@ def reestimate(data, alignment):
     expected=np.loadtxt(data['inputs']['rawtlt'],ndmin=1)
     np.testing.assert_allclose([float(r['tilt_deg']) for r in rows],expected,atol=1e-4)
     with np.load(checkpoint,allow_pickle=False) as state:
-        angles,axes=resolve(state,expected,data['orientation']['rotation_deg'])
+        angles,axes=defocus_geometry(state,expected,data['orientation']['rotation_deg'],data['orientation'].get('flip_y',False))
         active=np.asarray(state['active_indices'],int)
     # Invert the same Flip-Y-first raster orientation used for alignment.
-    if data['orientation'].get('flip_y',False):axes=-axes
     folders=[];initial=[];templates=[]
     for index in active:
         row=rows[int(index)]

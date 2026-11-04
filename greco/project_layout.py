@@ -13,7 +13,6 @@ STA_CATEGORIES={'extraction':'extraction',
  'ctf_refinement':'ctf_refinement','postprocessing':'postprocessing'}
 ROOTS=('preprocessing','reconstruction','picking','sta','segmentation')
 _ROOT_CACHE=set()
-_PREPROCESSING_LAYOUT_CACHE={}
 
 def safe_name(value):
     text=unicodedata.normalize('NFC',str(value)).strip()
@@ -74,8 +73,8 @@ def work_path(root,row,kind,queued=False):
     elif kind in ('preprocessing','ctf_redo','handedness_test'):
         data=json.loads((root/'project.json').read_text())
         record=next((r for r in data.get('preprocessing_assemblies',[]) if r['id']==row.get('preprocessing_assembly_id')),None)
-        if data.get('preprocessing_layout_version')==3 and record is None:raise ValueError('Create a preprocessing collection first.')
-        result=(record_directory(root,record,'preprocessing') if record else root/'preprocessing')/series
+        if record is None:raise ValueError('Create a preprocessing collection first.')
+        result=record_directory(root,record,'preprocessing')/series
         if kind=='ctf_redo':result=result/'.ctf-pending'
         elif kind=='handedness_test':result=result/'ctf/handedness'
     elif kind=='reconstruction':
@@ -83,7 +82,6 @@ def work_path(root,row,kind,queued=False):
         record=next((r for r in data.get('reconstruction_assemblies',[]) if r['id']==row.get('reconstruction_assembly_id')),None)
         if row.get('reconstruction_assembly_id') and record is None:raise ValueError('Unknown reconstruction identity.')
         if record is None:raise ValueError('Create a reconstruction first.')
-        if record.get('legacy'):raise ValueError('Migrate this reconstruction before submitting.')
         result=record_directory(root,record,'reconstruction')/series
     else:
         from .web.reconstruction_steps import ensure
@@ -110,20 +108,10 @@ def preprocessing_work(path):
         if kind=='preprocessing':return work
     return job_work(path)
 
-def _preprocessing_depth(root):
-    manifest=Path(root)/'project.json'
-    stat=manifest.stat();stamp=(stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
-    cached=_PREPROCESSING_LAYOUT_CACHE.get(root)
-    if cached is None or cached[0]!=stamp:
-        depth=3 if json.loads(manifest.read_text()).get('preprocessing_layout_version',2)==3 else 2
-        _PREPROCESSING_LAYOUT_CACHE[root]=(stamp,depth)
-    return _PREPROCESSING_LAYOUT_CACHE[root][1]
-
-
 def _context(path, root):
     parts = path.relative_to(root).parts
     if len(parts)>=2 and parts[0]=='preprocessing':
-        length=_preprocessing_depth(root)
+        length=3
         if len(parts)<length:return None,[],None
         work=root.joinpath(*parts[:length]);rest=list(parts[length:])
         if rest and rest[0]=='.ctf-pending':return work/rest[0],rest[1:],'preprocessing'

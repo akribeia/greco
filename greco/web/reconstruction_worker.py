@@ -68,7 +68,7 @@ def run(config):
         from ..optimizer.advanced_options import checked_resolved,resolve
         advanced=checked_resolved(data['advanced_options']) if 'advanced_options' in data else resolve()
         if advanced['advanced_mode'] and int(data['inputs']['binning'])!=8:raise ValueError('Advanced mode requires bin8 input.')
-        if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')) and guidance and guidance['smoothness_strength']!=0:raise ValueError('Smoothness must be zero for angular refinement.')
+        if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles','refine_gamma')) and guidance and guidance['smoothness_strength']!=0:raise ValueError('Smoothness must be zero for angular refinement.')
         alignment_inputs=data['inputs']
         if advanced['advanced_mode']:
             from ..final_reconstruction import final_stack
@@ -115,6 +115,9 @@ def run(config):
         if advanced.get('fine_scale_refinement'):
             from ..optimizer.fine_scale import run as refine_fine_scale
             refine_fine_scale(data,output,source)
+        if advanced.get('refine_gamma'):
+            from ..optimizer.gamma_refinement import run as refine_gamma
+            refine_gamma(data,output)
         summary=json.loads((storage_path(alignment, 'summary.json')).read_text())
         active=np.asarray(summary['active_indices'],int)
         from ..alignment_geometry import resolve as resolve_geometry
@@ -125,7 +128,7 @@ def run(config):
             raise ValueError('Unsupported final reconstruction protocol; create a new reconstruction.')
         physical_metadata=None
         final_binning=data.get('final_binning') or int(data['inputs']['binning'])
-        if final_binning!=int(data['inputs']['binning']) or advanced.get('tomogram_leveling'):
+        if final_binning!=int(data['inputs']['binning']) or advanced.get('tomogram_leveling') or advanced.get('refine_gamma'):
             if final_protocol!='native-wiener-sz-no-reliability-canonical-z-v1':
                 raise ValueError('Independent final binning requires native Wiener reconstruction.')
             from .segmentation_worker import reconstruct
@@ -153,7 +156,7 @@ def run(config):
             volume_shape=list(volume.shape)
         if 'cupy' in sys.modules:
             sys.modules['cupy'].get_default_memory_pool().free_all_blocks()
-        result=dict(fine_scale_refinement=summary.get('fine_scale_refinement'),geometry_converged=summary.get('geometry_converged',True),
+        result=dict(gamma_refinement=summary.get('gamma_refinement'),fine_scale_refinement=summary.get('fine_scale_refinement'),geometry_converged=summary.get('geometry_converged',True),
                     consecutive_stage_failures=summary.get('consecutive_stage_failures',0),
                     advanced_options=advanced,state='completed',
                     volumes=dict(original=str(original)),shape=volume_shape,final_binning=final_binning,alignment_binning=int(data['inputs']['binning']),

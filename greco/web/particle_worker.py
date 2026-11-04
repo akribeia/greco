@@ -260,8 +260,10 @@ def run(config):
         from ..alignment_geometry import resolve as resolve_geometry,scalar_or_array
         with np.load(member['final_state'],allow_pickle=False) as geometry_state:
             fitted_axes=resolve_geometry(geometry_state,all_angles,orientation['rotation_deg'])[1][active]
+            from ..alignment_geometry import aligned_cameras
+            full_cameras=aligned_cameras(geometry_state,all_angles,orientation['rotation_deg'])[active] if 'axis_inclination_deg' in geometry_state else None
         centres,R=raw_particle_geometry(xyz,shape,export_transform,angles,cumulative,
-            frozen,scalar_or_array(fitted_axes),orientation.get('flip_y',False),coarse_size)
+            frozen,scalar_or_array(fitted_axes),orientation.get('flip_y',False),coarse_size,cameras=full_cameras)
         if member.get('rigid_geometry'):
             from ..particle_geometry import refined_raw_particle_geometry
             with np.load(member['rigid_geometry'],allow_pickle=False) as saved:

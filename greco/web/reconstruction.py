@@ -15,7 +15,7 @@ METHODS=('tinycare',)
 
 def capabilities():
     return dict(optimizer='greco_optimizer',optimizer_name='Greco Optimizer',optimizer_version=1,
-                entry_search_sigma_default_px=8.,integrated_smoothness=True,final_binning=True,rescue_radius_px=16,linear_refinement_steps=True,advanced_reconstruction=True)
+                entry_search_sigma_default_px=8.,integrated_smoothness=True,final_binning=True,rescue_radius_px=16,linear_refinement_steps=True,advanced_reconstruction=True,experimental_gamma_refinement=True)
 
 
 def main_revision():
@@ -41,7 +41,7 @@ def submit(service,project_id,series_ids,denoisers,optimizer='greco_optimizer',e
     if smoothness_strength is not None:
         from .alignment_options import validate
         alignment=validate(smoothness_strength,rescue_tilts)
-    if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles')) and alignment['smoothness_strength']!=0:
+    if any(advanced[k] for k in ('refine_common_axis','refine_per_view_axis','refine_tilt_angles','refine_gamma')) and alignment['smoothness_strength']!=0:
         raise InputError('Smoothness must be zero when refining the tilt axis.')
     from greco.optimizer.entry import validate_sigma
     try:entry_search_sigma_px=validate_sigma(entry_search_sigma_px)
@@ -188,6 +188,8 @@ def landmark_preview(service,root,job):
     except (OSError,ValueError,KeyError):return None
     if angles.ndim!=1 or not np.isfinite(angles).all():return None
     candidates=[]
+    gamma=work/'registration/gamma'
+    if gamma.is_dir():candidates.append((3,0,gamma))
     fine=work/'registration/fine_scale'
     if fine.is_dir():candidates.append((2,0,fine))
     for directory in (work/'registration').glob('*'):
@@ -230,7 +232,9 @@ def refined_angle_table(service, root, job):
             if nominal.ndim!=1 or nominal.shape!=refined.shape or nominal.shape!=axes.shape:return []
             if not all(np.isfinite(a).all() for a in (nominal,refined,axes)):return []
             active=set(np.asarray(state['active_indices'],int).tolist())
-            return [dict(tilt=int(i)+1,alpha_nominal=float(nominal[i]),alpha_refined=float(refined[i]),beta_refined=float(axes[i]),included=i in active) for i in np.argsort(nominal)]
+            gamma=np.asarray(state['axis_inclination_deg'],float) if 'axis_inclination_deg' in state else None
+            if gamma is not None and (gamma.shape!=nominal.shape or not np.isfinite(gamma).all()):return []
+            return [dict(**({'gamma_refined':float(gamma[i])} if gamma is not None else {}),tilt=int(i)+1,alpha_nominal=float(nominal[i]),alpha_refined=float(refined[i]),beta_refined=float(axes[i]),included=i in active) for i in np.argsort(nominal)]
     try:
         from .metadata_cache import MetadataCache
         cache=getattr(service,'refined_angle_cache',None)
@@ -309,12 +313,13 @@ def status(service,project_id,series_id):
             sources={expected.resolve()}
             if Path(geo['source_reconstruction']).resolve() in sources:
                 path=service.path(geo['tomogram'])
-                if path==storage_path(service.path(geo['work']), 'output/tomogram_bin8.mrc'):
+                from ..reconstruction_layout import owned_volume
+                if owned_volume(path,service.path(geo['work'])):
                     job['volumes']['geometry']=str(path)
                     job['volume_shapes']={'geometry':geo['preview_shape']}
                     for method in METHODS:
                         candidate=geo.get('volumes',{}).get(method)
-                        if candidate and Path(candidate)==storage_path(service.path(geo['work']), f'output/tomogram_{method}.mrc') and Path(candidate).is_file():
+                        if candidate and owned_volume(service.path(candidate),service.path(geo['work'])):
                             job['volumes']['geometry_'+method]=str(service.path(candidate))
                             job['volume_shapes']['geometry_'+method]=geo['preview_shape']
         job['landmarks']=landmark_preview(service,root,job)

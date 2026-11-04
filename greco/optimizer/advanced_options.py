@@ -1,9 +1,9 @@
 """Submission-time contract for independent Advanced reconstruction options."""
-PROTOCOL='greco-advanced-v9'
+PROTOCOL='greco-advanced-v10'
 STAGE_MAX_PASSES=120
 NUMERICAL_SOLVER_MAX_ITERATIONS=180
 
-FIELDS=('advanced_mode','refine_common_axis','refine_per_view_axis','refine_tilt_angles')
+FIELDS=('advanced_mode','refine_common_axis','refine_per_view_axis','refine_tilt_angles','refine_gamma')
 EXTRA_FIELDS=('reestimate_ctf','fine_scale_refinement','tomogram_leveling')
 
 def validate(raw=None):
@@ -37,6 +37,7 @@ def resolve(raw=None, *, legacy=False):
         stage_continuation_policy='safe_provisional_max_passes',common_rounds=5 if active else 0,
         roll_rounds=5 if effective['refine_per_view_axis'] else 0,
         inclination_rounds=10 if effective['refine_tilt_angles'] else 0,
+        gamma_rounds=10 if effective['refine_gamma'] else 0,gamma_weight=.001,
         progressive_max_passes=STAGE_MAX_PASSES,angular_max_passes=STAGE_MAX_PASSES,
         numerical_solver_max_iterations=NUMERICAL_SOLVER_MAX_ITERATIONS,
         normal_radius_px=4,rescue_radius_px=32,rescue_radii_px=[4,16,32],measurement_rms_ratio=1.02,
@@ -48,8 +49,9 @@ def checked_resolved(value):
     if not isinstance(value,dict) or 'selected' not in value:raise ValueError('Missing Advanced settings snapshot.')
     legacy=value.get('protocol')=='greco-advanced-v7'
     expected=resolve(value['selected'],legacy=legacy)
-    if value.get('protocol') in ('greco-advanced-v7','greco-advanced-v8'):
-        if value['selected'].get('fine_scale_refinement'):raise ValueError('Fine-scale refinement requires the current protocol.')
+    if value.get('protocol') in ('greco-advanced-v7','greco-advanced-v8','greco-advanced-v9'):
+        if value.get('protocol')!='greco-advanced-v9' and value['selected'].get('fine_scale_refinement'):raise ValueError('Fine-scale refinement requires the current protocol.')
+        if value['selected'].get('refine_gamma'):raise ValueError('Gamma refinement requires the current protocol.')
         expected['protocol']=value['protocol']
         compared={key:val for key,val in expected.items() if key in value}
         compared['selected']={key:val for key,val in expected['selected'].items() if key in value['selected']}

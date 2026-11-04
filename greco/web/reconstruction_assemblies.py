@@ -31,13 +31,6 @@ def capture(data):
 def ensure(data):
     if 'reconstruction_assemblies' in data:return False
     data['reconstruction_assemblies']=[]
-    if not any(row.get('reconstruction',{}).get('work') for row in data['series']):return True
-    advanced=bool(data.get('reconstruction_advanced_options',{}).get('enabled'))
-    record=dict(id=uuid.uuid4().hex[:8],name='Reconstruction 001',mode='advanced' if advanced else 'standard',legacy=True,series={})
-    data['reconstruction_assemblies'].append(record);data['active_reconstruction_assembly']=record['id']
-    for row in data['series']:row['reconstruction_assembly_id']=record['id']
-    capture(data)
-    for picker in data.get('pick_assemblies',[]):picker.setdefault('reconstruction_assembly_id',record['id'])
     return True
 
 
@@ -106,7 +99,6 @@ def delete(service,project_id,identifier,confirmed=False):
         root=service._root(project_id);data=service._read(root);capture(data)
         record=next((r for r in data.get('reconstruction_assemblies',[]) if r['id']==identifier),None)
         if record is None:raise InputError('Unknown reconstruction.')
-        if record.get('legacy'):raise InputError('Migrate this reconstruction before deleting the whole collection.')
         for picker in data.get('pick_assemblies',[]):
             if picker.get('reconstruction_assembly_id')==identifier:
                 raise InputError('Picking assembly '+picker['name']+' uses this reconstruction. Delete it first.')

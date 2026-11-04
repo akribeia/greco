@@ -26,9 +26,8 @@ def artifact_relative(work,parts):
         root=project_root(work)
         relative=Path(work).relative_to(root).parts if root else Path(work).parts
         series=relative[2].removesuffix('.queued') if relative[0]=='reconstruction' else relative[relative.index('series')+1]
-        number=Path(work).parts[Path(work).parts.index('refinement')+1] if 'refinement' in Path(work).parts else '001'
         method='_tinycare' if 'tinycare' in p[0] else ''
-        p=['volumes',f'{series}_r{number}{method}_bin{_binning(Path(work))}.mrc',*p[1:]]
+        p=['volumes',f'{series}{method}_bin{_binning(Path(work))}.mrc',*p[1:]]
     if p[0]=='alignment' and len(p)>1:
         name=p[1]
         if name in ('final_state.npz','rigid_geometry.npz'):p[1]='state.npz'
@@ -44,6 +43,13 @@ def artifact_relative(work,parts):
         elif p[1]=='tinycare_config.json':p[1]='training_config.json'
         elif p[1]=='progress.json':p=['logs','tinycare_progress.json',*p[2:]]
     return p
+
+
+
+def owned_volume(path,work):
+    """Read the recorded volume path within its job, independent of its name."""
+    path=Path(path)
+    return path.suffix.lower()=='.mrc' and path.is_file() and path.resolve().parent==(Path(work)/'volumes').resolve()
 
 
 def enabled(path):
@@ -81,6 +87,9 @@ def write_tables(work):
     if not rigid and 'refined_angles_deg' in d:
         columns+=['grecoRefinedTiltAngleDeg','grecoTiltAxisRotationDeg']
         records=[(*row,float(d['refined_angles_deg'][i]),float(d['axis_rotation_deg'][i])) for i,row in enumerate(records)]
+    if not rigid and 'axis_inclination_deg' in d:
+        columns+=['grecoTiltAxisInclinationDeg']
+        records=[(*row,float(d['axis_inclination_deg'][i])) for i,row in enumerate(records)]
     with (path.parent/'tilts.star').open('w') as stream:
         write_loop(stream,'general',['grecoFormatName','grecoCoordinateConvention'],[('greco-reconstruction-v1','centered_world_xyz_and_raw_detector_xy_angstrom' if rigid else 'MAIN_aligned_raster_shifts_pixels_at_binning')])
         write_loop(stream,'tilts',columns,records)

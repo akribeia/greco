@@ -187,8 +187,8 @@ def volume_png(service,pid,sid,step_id,index,axis='z',method='original',**contra
     job=status(service,pid,sid,step_id)
     if job.get('state')!='completed':raise InputError('Geometry is not complete.')
     path=service.path(job.get('volumes',{}).get(method,job.get('tomogram') if method=='original' else ''))
-    expected=storage_path(storage_path(Path(job['work']), 'output'), 'tomogram_bin8.mrc' if method=='original' else 'tomogram_'+method+'.mrc')
-    if method not in ('original','tinycare') or path!=expected:raise InputError('Invalid geometry volume.')
+    from ..reconstruction_layout import owned_volume
+    if method not in ('original','tinycare') or not owned_volume(path,job['work']):raise InputError('Invalid geometry volume.')
     image=volume_plane_image(path,index,axis,denoised=method=='tinycare',**contrast);stream=io.BytesIO();image.save(stream,format='PNG');return stream.getvalue()
 
 def delete(service,pid,sid,step_id,confirmed):

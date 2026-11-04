@@ -40,6 +40,9 @@ def reconstruct(data,output,raw_override=None,suffix=''):
         check_tilt_angles(state['angles_deg'],angles,'Segmentation angle identities differ.')
         from ..alignment_geometry import resolve,scalar_or_array
         fitted_angles,fitted_axes=resolve(state,angles,source['orientation']['rotation_deg'])
+        from ..alignment_geometry import aligned_cameras
+        full_cameras=aligned_cameras(state,angles,source['orientation']['rotation_deg']) if 'axis_inclination_deg' in state else None
+        reference_angles=np.asarray(state.get('gamma_reference_angles_deg',fitted_angles),float)
     if not data.get('geometry_file'):
         rows=read_table(source['inputs']['frozen_shifts'])
         check_tilt_angles([float(r['angle_deg']) for r in rows],angles,'Frozen shift identities differ.')
@@ -77,7 +80,7 @@ def reconstruct(data,output,raw_override=None,suffix=''):
         shifts=scale_shifts(cumulative,source_size,n,b/q,axis,flip)
         frozen=np.array([[float(r['dy_raw']),float(r['dx_raw'])] for r in rows])/q
         if flip:frozen[:,0]*=-1
-        frozen=frozen[active];cameras=initial_cameras(angles[active],0)
+        frozen=frozen[active];cameras=initial_cameras(angles[active],0) if full_cameras is None else full_cameras[active]
     images=materialize_raw_stack_gpu(cp.asarray(raw),active,shifts,frozen,axis);del raw
     percent=original.get('tomogram_thickness_percent',50.);z0,z1=slab_bounds(n,percent)
     from ..optimizer.leveling import resolve as resolve_leveling
@@ -85,7 +88,7 @@ def reconstruct(data,output,raw_override=None,suffix=''):
     # Filter in the detector geometry; rotate only the reconstruction frame.
     filtered=ramp_filter(images,cameras,cp);del images
     cameras=cameras@leveling_rotation[::-1,::-1].T
-    wbp=RigidCameraWBP(filtered,cameras,initial_cameras(angles[active],0),cp)
+    wbp=RigidCameraWBP(filtered,cameras,initial_cameras((reference_angles if full_cameras is not None and not data.get('geometry_file') else angles)[active],0),cp)
     percent=original.get('tomogram_thickness_percent',50.);z0,z1=slab_bounds(n,percent)
     target=storage_path(output, 'tomogram'+suffix+'.mrc')
     with mrcfile.new_mmap(target,shape=(z1-z0,n,n),mrc_mode=12,overwrite=False) as m:

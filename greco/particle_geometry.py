@@ -41,7 +41,7 @@ def output_box(native_box, binning):
 
 
 def raw_particle_geometry(xyz, shape_xyz, export_transform_zyx, angles, cumulative,
-                          frozen, axis_deg, flip_y, coarse_size):
+                          frozen, axis_deg, flip_y, coarse_size, *, cameras=None):
     """Map exported pick pixels back to the unchanged raw MC raster.
 
     Returns centres (particle,tilt,xy) in coarse detector pixels and one
@@ -56,7 +56,10 @@ def raw_particle_geometry(xyz, shape_xyz, export_transform_zyx, angles, cumulati
     def project(points):
         zyx=points[:,::-1]
         internal=(inverse[:3,:3]@zyx.T).T+inverse[:3,3]
-        aligned=np.stack([project_points_aligned_axis0(internal,a,coarse_size) for a in angles],axis=1)
+        if cameras is None:
+            aligned=np.stack([project_points_aligned_axis0(internal,a,coarse_size) for a in angles],axis=1)
+        else:
+            aligned=np.einsum('tij,nj->nti',np.asarray(cameras)[:,[1,0]],internal[:,::-1]-(coarse_size-1)/2)+(coarse_size-1)/2
         by,bx=raw_sample_bases(aligned,cumulative,frozen,axis_deg,coarse_size)
         if flip_y:by=coarse_size-1-by
         return np.stack((bx,by),axis=-1)
