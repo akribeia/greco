@@ -131,3 +131,12 @@ def spherical_mask(size: int, radius: float, center: float):
     return (r <= radius).astype(np.float32)
 
 
+
+
+def create_template_wedge(shape, metadata, voxel_size, *, impulse_spectral_weighting=False):
+    """Template-side wedge, with optional impulse-derived radial weighting."""
+    base = create_wedge(shape, metadata, voxel_size, cut_off_radius=1.0).astype(np.float32)
+    if impulse_spectral_weighting:
+        from .impulse_weighting import radial_weighting
+        return radial_weighting(base, shape, metadata, voxel_size)
+    return base

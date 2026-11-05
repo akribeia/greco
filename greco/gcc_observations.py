@@ -21,7 +21,7 @@
 """Shared GPU image measurements for fixed and angular geometry fitting."""
 import time
 import numpy as np
-from .gcc import (_gpu, _loo_support_table, transfer_cache_gpu,
+from .gcc import (_gpu, _loo_support_table,
     _angular_operators_batched, raw_sample_bases, raw_patch_stacks_gpu,
     raw_search_support, _rotated_offsets, raw_search_regions_gpu,
     materialize_raw_stack_gpu, materialize_cumulative_stack_gpu,
@@ -93,8 +93,8 @@ def measure_observations(original, angles, initial_tracks, initial_cumulative, *
         support_rows, support_masks = _loo_support_table(valid)
         support_valid = valid.copy()
         loo_supports = list(support_masks.values())
-        transfer_cache = transfer_cache_gpu(
-            transfer_cache_for_supports(angles, loo_supports, size=patch_size))
+        # Retain transfers on the host; only their prepared operators need GPU residency.
+        transfer_cache = transfer_cache_for_supports(angles, loo_supports, size=patch_size)
 
         operator_cache = _angular_operators_batched(
             transfer_cache, list(transfer_cache), wiener_lambda,
@@ -226,8 +226,7 @@ def measure_observations(original, angles, initial_tracks, initial_cumulative, *
         missing = {key: mask for key, mask in support_masks.items()
                    if key and key not in transfer_cache}
         if missing:
-            transfer_cache.update(transfer_cache_gpu(
-                transfer_cache_for_supports(angles, list(missing.values()), size=patch_size)))
+            transfer_cache.update(transfer_cache_for_supports(angles, list(missing.values()), size=patch_size))
 
     votes = np.full((len(positions), len(angles), 2), np.nan, np.float32)
     score_surfaces = np.full((len(positions), len(angles),

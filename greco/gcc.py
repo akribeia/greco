@@ -165,7 +165,7 @@ def _angular_operators_batched(transfers, keys, wiener_lambda, max_inverse_gain,
     operators = {}
     for start in range(0, len(keys), chunk):
         part = keys[start:start + chunk]
-        batch = cp.stack([transfers[key] for key in part])
+        batch = cp.stack([cp.asarray(transfers[key]) for key in part])
         inverse = angular_transfer_operator_gpu(batch, wiener_lambda,
                                                 max_inverse_gain, lowpass_fraction)
         operators.update((key, inverse[i]) for i, key in enumerate(part))

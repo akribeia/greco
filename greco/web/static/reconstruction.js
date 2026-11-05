@@ -220,7 +220,18 @@ async function pollReconstruction(projectId,seriesId) {
       $('recon-status').className='badge '+(job.state==='completed'?'':'pending');
       bindPreprocessingActions(job,'reconstruction','recon-status');
     }
-    $('recon-job-info').textContent=[job.job_id?'Slurm job '+job.job_id:'','Greco Optimizer',job.alignment_options?`Smoothness ${job.alignment_options.smoothness_strength} · Rescue ${job.alignment_options.rescue_tilts?'±16 px':'off'}`:'',job.active_count?`${job.active_count}/${job.total_tilts} tilts`:'',job.final_binning?`Final bin ${job.final_binning}`:'',job.work || '',job.error || job.status_error || '',...Object.entries(job.denoising_errors || {}).map(([m,e])=>m+': '+e)].filter(Boolean).join(' · ');
+    const advanced=job.advanced_options?.advanced_mode ?? !!reconstructionAdvancedDraft().enabled;
+    const advancedOptions=job.advanced_options || {};
+    const refinedAngles=[['refine_common_axis','β common'],['refine_per_view_axis','β per tilt'],['refine_tilt_angles','α'],['refine_gamma','γ']].filter(([key])=>advancedOptions[key]).map(([,label])=>label);
+    const advancedInfo=advanced?[
+      refinedAngles.length?`${job.state==='completed'?'Refined':'Refinement'}: ${refinedAngles.join(' + ')}`:'',
+      advancedOptions.fine_scale_refinement?`Fine-scale bin ${advancedOptions.fine_scale_binning}`:'',
+      advancedOptions.tomogram_leveling?'Tomogram leveling':''
+    ]:[];
+    $('recon-job-info').textContent=[job.job_id?'Slurm job '+job.job_id:'','Greco Optimizer',...advancedInfo,!advanced && job.alignment_options?`Smoothness ${job.alignment_options.smoothness_strength} · Rescue ${job.alignment_options.rescue_tilts?'±16 px':'off'}`:'',job.active_count?`${job.active_count}/${job.total_tilts} tilts`:'',job.final_binning?`Final bin ${job.final_binning}`:'',advanced?'':job.work || '',job.error || job.status_error || '',...Object.entries(job.denoising_errors || {}).map(([m,e])=>m+': '+e)].filter(Boolean).join(' · ');
+    if(advanced && job.work){
+      const path=document.createElement('div');path.textContent=job.work;$('recon-job-info').append(path);
+    }
     if(job.warning){
       const warning=document.createElement('div');warning.className='reconstruction-warning';
       const label=document.createElement('strong');label.textContent='Warning: ';

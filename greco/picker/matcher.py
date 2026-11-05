@@ -37,6 +37,7 @@ from .roi import roi_slices as search_roi_slices
 from .weights import (
     create_gaussian_band_pass,
     create_wedge,
+    create_template_wedge,
     phase_randomize_template,
 )
 
@@ -99,6 +100,7 @@ class MatchJob:
         hybrid_cfg: dict | None = None,
         noise_template_iterations: int = 40,
         symmetric_noise: bool = False,
+        impulse_spectral_weighting: bool = False,
     ):
         self.tomogram = pathlib.Path(tomogram)
         self.template = pathlib.Path(template)
@@ -117,6 +119,9 @@ class MatchJob:
         self.batch_size = batch_size
         self.noise_template_iterations = noise_template_iterations
         self.symmetric_noise = bool(symmetric_noise)
+        if not isinstance(impulse_spectral_weighting, bool):
+            raise ValueError("Impulse spectral weighting must be a boolean.")
+        self.impulse_spectral_weighting = impulse_spectral_weighting
         if isinstance(noise_template_iterations,bool) or not isinstance(noise_template_iterations,int) or noise_template_iterations<0:
             raise ValueError('Noise template iterations must be a nonnegative integer')
         # speed shortcuts: the local-normalisation mask is only rotated when
@@ -267,8 +272,9 @@ class MatchJob:
         mask_np = read_mrc(self.mask)
         tmpl_shape = template_np.shape
 
-        wedge_template = create_wedge(
-            tmpl_shape, self.ts_metadata, self.voxel_size, cut_off_radius=1.0,
+        wedge_template = create_template_wedge(
+            tmpl_shape, self.ts_metadata, self.voxel_size,
+            impulse_spectral_weighting=self.impulse_spectral_weighting,
         ).astype(np.float32)
         if not (self.low_pass is None and self.high_pass is None):
             wedge_template *= create_gaussian_band_pass(
@@ -836,6 +842,7 @@ class MatchJob:
             "rng_seed": self.rng_seed,
             "noise_template_iterations": self.noise_template_iterations,
             "symmetric_noise": self.symmetric_noise,
+            "impulse_spectral_weighting": self.impulse_spectral_weighting,
             "per_tilt_weighting": self.ts_metadata.per_tilt_weighting,
             "tilt_angles": list(self.ts_metadata.tilt_angles),
             "dose_accumulation": (

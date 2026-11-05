@@ -132,7 +132,7 @@ function renderPicking() {
   const template=project.picker_template;
   const options={template_pixel_size_A:template?.pixel_size_A ?? null,flip_z:false,invert_contrast:false,
     particle_diameter_A:300,angular_search_deg:10,max_particles:1000,candidate_count:2000,
-    high_pass_A:400,low_pass_A:null,matching_mode:'exhaustive',threshold_factor:1,...project.picking_options,...state.pickerDraft};
+    high_pass_A:400,low_pass_A:null,matching_mode:'exhaustive',threshold_factor:1,impulse_spectral_weighting:false,...project.picking_options,...state.pickerDraft};
   const fields=[['template_pixel_size_A','Template pixel size (Å)'],['particle_diameter_A','Particle diameter (Å)'],
     ['angular_search_deg','Angular sampling (°)'],['max_particles','Max particles'],['candidate_count','Candidate pool'],
     ['high_pass_A','High-pass (Å)'],['low_pass_A','Low-pass (Å)'],['threshold_factor','Threshold factor']];
@@ -164,6 +164,8 @@ function renderPicking() {
     <label class="check-line"><span>Flip template Z</span><input type="checkbox" data-picker-option="flip_z" ${options.flip_z?'checked':''}></label>
     <label class="check-line"><span>Invert template contrast</span><input type="checkbox" data-picker-option="invert_contrast" ${options.invert_contrast?'checked':''}></label></div>
     <p class="hint viewer-info">Particle diameter controls extraction exclusion and edge margins only. Your mask is resampled together with the template. Flip Z reflects both; contrast inversion changes only template density.</p>
+    <label class="check-line picker-impulse-option"><span>Impulse-based spectral weighting</span><input type="checkbox" data-picker-option="impulse_spectral_weighting" ${options.impulse_spectral_weighting?'checked':''}></label>
+    <p class="hint">Uses the radial spectrum of a reconstructed point to weight template frequencies.</p>
     </div><p class="hint viewer-info" id="picker-selected">Selected: ${esc(selectedSeries()?.name || 'none')}</p><p id="picker-error" class="form-error viewer-info" role="alert"></p>
     <div class="submit-actions"><button type="submit" class="button primary" data-picker-submit="one">Submit</button><button type="submit" class="button secondary" data-picker-submit="all">Submit all</button></div></form></div>`;
   bindPickAssemblies();refreshPickerAssets();

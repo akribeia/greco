@@ -90,7 +90,8 @@ def run(config_path):
             noise_correction=True,noise_every=1,mask_is_spherical=spherical,rotate_mask=False,
             orientation_ids=[int(i) for i in ids] if ids is not None else None,
             hybrid_cfg=hybrid if mode=='fast' else None,
-            noise_template_iterations=0,symmetric_noise=mode=='exhaustive')
+            noise_template_iterations=0,symmetric_noise=mode=='exhaustive',
+            impulse_spectral_weighting=options.get('impulse_spectral_weighting',False))
         matching_result=job.run()
         if mode=='exhaustive':
             from ..picker.extract import extract_and_write
@@ -115,6 +116,7 @@ def run(config_path):
             star=str(storage_path(output, 'particles.star')),voxel_size_A=voxel,
             template_shape=list(template.shape),volume=config['volume'],options=options,engine='greco-picker',
             mask=config['mask'],mask_is_spherical=spherical,matching_mode=mode,
+            impulse_spectral_weighting=job.impulse_spectral_weighting,
             rotate_mask=False,screen_orientations=len(ids) if ids is not None else len(angles),
             noise_model='phase-only-antithetic',noise_template_iterations=0,
             per_tilt_weighting=metadata.per_tilt_weighting,

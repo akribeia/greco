@@ -12,7 +12,7 @@ MAX_TEMPLATE_BYTES=128*1024*1024
 MAX_SERVER_TEMPLATE_BYTES=2*1024**3
 DEFAULTS=dict(template_pixel_size_A=None,flip_z=False,invert_contrast=False,
     particle_diameter_A=300.,template_mask_diameter_A=None,angular_search_deg=10.,max_particles=1000,
-    candidate_count=2000,high_pass_A=400.,low_pass_A=None,matching_mode='exhaustive',threshold_factor=1.)
+    candidate_count=2000,high_pass_A=400.,low_pass_A=None,matching_mode='exhaustive',threshold_factor=1.,impulse_spectral_weighting=False)
 
 def check_particle_dependants(data,series_ids):
     """Never replace picking files already referenced by a particle assembly."""
@@ -101,7 +101,7 @@ def validate_options(raw):
     options=dict(DEFAULTS,**raw)
     if options['matching_mode'] not in ('fast','exhaustive'):
         raise InputError('Picker mode must be Fast or Exhaustive.')
-    for key in ('flip_z','invert_contrast'):
+    for key in ('flip_z','invert_contrast','impulse_spectral_weighting'):
         if not isinstance(options[key],bool):raise InputError('Invalid picker checkbox.')
     for key in ('template_pixel_size_A','particle_diameter_A','template_mask_diameter_A','angular_search_deg','max_particles','candidate_count','high_pass_A','low_pass_A','threshold_factor'):
         value=options[key]

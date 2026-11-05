@@ -51,7 +51,7 @@ from .noise_model import SymmetricNoiseBank,half_range_max
 from .io import PICK_COLUMNS, read_mrc, write_mrc, write_star
 from .weights import (
     create_gaussian_band_pass,
-    create_wedge,
+    create_template_wedge,
     phase_randomize_template,
 )
 
@@ -521,9 +521,9 @@ def run_hybrid_refine(job, corrected_full, stats, wall_screen, *, orientation_ma
     t0 = time.time()
     # byte-identical to the screen loop's wedge_template_t: float32
     # fields multiplied in float32 (research W36*BP36 convention)
-    wedge = create_wedge(
+    wedge = create_template_wedge(
         template_np.shape, job.ts_metadata, job.voxel_size,
-        cut_off_radius=1.0,
+        impulse_spectral_weighting=job.impulse_spectral_weighting,
     ).astype(np.float32)
     if not (job.low_pass is None and job.high_pass is None):
         wedge *= create_gaussian_band_pass(
