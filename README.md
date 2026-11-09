@@ -131,6 +131,8 @@ the GPU request from the job settings when no GPU directive is present.
 It also supplies the environment and processing command. You can paste an
 existing cluster batch script instead; only its `#SBATCH` options are kept.
 The saved template is shared across your projects, within your Unix account.
+Each user must save their own template before submitting jobs. Templates stored
+in shared or copied projects are not imported automatically.
 
 ## Update
 

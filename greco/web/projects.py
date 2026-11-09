@@ -301,9 +301,11 @@ class ProjectService:
             data = dict(version=1, layout_version=3, preprocessing_layout_version=3, preprocessing_assemblies=[], reconstruction_layout_version=3, segmentation_layout_version=2, picking_layout_version=1, sta_layout_version=2, name=root.name, path=str(root), series=[])
         if self.slurm_store is not None:
             shared = self.slurm_store.load()
-            if shared is None and data.get('slurm', {}).get('template'):
-                shared = self.slurm_store.save(data['slurm'], only_if_missing=True)
-            if shared is not None:
+            if shared is None:
+                # A shared/copied project may contain another user's account.
+                # Only explicitly saved personal settings authorize submission.
+                data.pop('slurm', None)
+            else:
                 data['slurm'] = shared
         return data
 

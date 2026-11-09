@@ -75,7 +75,7 @@
     <form id="settings-form">
       <div class="settings-content">
       <label class="field-label" for="submission-host">Submission host · optional</label>
-      <div class="path-control"><input id="submission-host" placeholder="Local submission, or user@vcl1092" autocomplete="off"></div>
+      <div class="path-control"><input id="submission-host" placeholder="Local submission, or user@login-host" autocomplete="off"></div>
       <label class="field-label slurm-label" for="slurm-template">Slurm script / template</label>
       <textarea id="slurm-template" class="slurm-editor" required spellcheck="false" aria-describedby="slurm-help"></textarea>
       <p id="slurm-help" class="hint">Paste any cluster batch script. Greco extracts only #SBATCH options: partition, account, GPU selection, memory and time are preserved. Job name, logs, nodes, tasks and CPUs become variables. The pasted software exports, directory and commands are discarded; Greco supplies {{environment}}, {{work_dir}} and {{command}}. Original pasted text is retained for reference.</p>
