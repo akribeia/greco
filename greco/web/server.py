@@ -213,7 +213,13 @@ def make_handler(service, session_token):
                 payload=file.read_bytes()
                 if parsed.path=='/':
                     from .. import __version__
+                    import os, pwd, socket
+                    from html import escape
+                    user = escape(pwd.getpwuid(os.geteuid()).pw_name, quote=True)
+                    node = escape(socket.gethostname().split('.')[0], quote=True)
                     payload=payload.replace(b'__GRECO_VERSION__',__version__.encode())
+                    payload=payload.replace(b'__GRECO_USER__',user.encode())
+                    payload=payload.replace(b'__GRECO_NODE__',node.encode())
                 self.send(200, payload, mime + "; charset=utf-8",etag=etag,
                           cache_control='private, max-age=0, must-revalidate' if etag else 'no-store')
             except (InputError, OSError, ValueError) as error:

@@ -510,3 +510,8 @@ details.pick-assembly[open]>summary::before,.pipeline-step[open]>summary::before
 .pick-assembly>summary .reconstruction-preprocessing-source+.assembly-delete-button{margin-left:0}
 
 #recon-view-grid .curation-tilt:disabled{opacity:1;cursor:default}
+
+.server-identity{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:12px;font-weight:600;line-height:1.4}.server-identity>span{font-size:13px}
+@media(max-width:760px){.topbar{height:auto;min-height:66px;flex-wrap:wrap;gap:10px;padding-top:10px;padding-bottom:10px}.topbar-actions{flex-wrap:wrap}}
+
+.server-identity[title*="__GRECO_"]{display:none}

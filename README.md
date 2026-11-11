@@ -94,6 +94,10 @@ browser address, normally `http://localhost:1212`. The server uses a private
 Unix socket on the cluster. `--local-port` changes the PC port; `--ssh-host`
 selects the SSH destination.
 
+> **Important:** Run the SSH tunnel only on your personal computer, never on
+> the cluster or a shared workstation. The tunnel provides your private
+> connection to Greco. Open the browser on that same personal computer.
+
 One managed server runs per Unix user. Shared installations keep each user's
 settings, recent projects, sockets and logs in their own `~/.greco`.
 Projects and scientific data stay in the folders selected in the web interface.

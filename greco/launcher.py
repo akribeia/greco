@@ -136,9 +136,12 @@ def show_status(state, active):
     print('\n' + rule)
     print('  CONNECT TO GRECO')
     print(rule)
+    print('\n  IMPORTANT: Run this SSH command ONLY on your personal computer.')
+    print('  This tunnel provides your private connection to Greco.')
+    print('  Do NOT run it on the cluster or on a shared workstation.')
     print('\n  Run on your PC:\n')
     print('    ' + shlex.join(['ssh', '-N', '-o', 'ExitOnForwardFailure=yes', '-L', forward, state['ssh_host']]))
-    print('\n  Browser:\n')
+    print('\n  Open in your PC browser:\n')
     print(f'    http://localhost:{state["local_port"]}')
     print('\n' + rule + '\n')
 
